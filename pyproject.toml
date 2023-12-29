@@ -1,0 +1,28 @@
+[tool.poetry]
+name = "diffdeb"
+version = "0.0.1"
+description = "Galaxy deblender with latent diffusion models"
+authors = ["Biswajit Biswas <biswas@apc.in2p3.fr>"]
+readme = "README.md"
+keywords = ["galaxies", "deblending", "cosmology", "generative models"]
+license = "MIT"
+
+[tool.poetry.dependencies]
+python = "^3.9"
+jax = "*"
+jaxlib = "*"
+flax = "*"
+tensorflow-probability = "*"
+tensorflow-datasets = "*"
+galcheat = "*"
+numba = "*"
+matplotlib = {version="*", optional=true}
+seaborn = {version="*", optional=true}
+pytest = {version="*", optional=true}
+pre-commit = {version="*", optional=true}
+jupyter = {version="*", optional=true}
+ipykernel = {version="*", optional=true}
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
