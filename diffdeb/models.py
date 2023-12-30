@@ -143,7 +143,7 @@ def reparameterize(rng, mean, logvar):
   eps = random.normal(rng, logvar.shape)
   return mean + eps * std
 
-def create_VAE_model(latent_dim,
+def create_vae_model(latent_dim,
     filters=[15, 15, 15, 15], 
     kernels=[3, 3, 3, 3], 
     dense_layer_units=120, 
