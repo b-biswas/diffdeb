@@ -2,8 +2,12 @@ from diffdeb.losses import kl_divergence, mse_loss_fn
 from diffdeb.models import create_vae_model, UNet
 import jax 
 import jax.numpy as jnp
+import numpy as np
 from jax import random 
 import logging
+from diffdeb.diff_utils import forward_noising
+
+import ml_collections
 
 import flax.linen as nn
 from flax.training import train_state
@@ -29,6 +33,7 @@ def train_step_vae(state, batch, z_rng, latent_dim):
   grads = jax.grad(loss_fn)(state.params)
   return state.apply_gradients(grads=grads)
 
+@jax.jit
 def eval_f_vae(params, images, z, z_rng, latent_dim):
   def eval_model(vae):
     recon_images, mean, logvar = vae(images[0], z_rng)
@@ -44,42 +49,36 @@ def eval_f_vae(params, images, z, z_rng, latent_dim):
 
   return nn.apply(eval_model, create_vae_model(latent_dim))({'params': params})
 
-
 def train_and_evaluate_vae(
     train_ds,
     val_ds,
-    num_epochs,
-    steps_per_epoch_train, 
-    steps_per_epoch_val,
-    batch_size=32,
-    latent_dim=16,
-    learning_rate=1e-4,
+    config: ml_collections.ConfigDict,
   ):
   """Train and evaulate pipeline."""
   rng = random.key(0)
   rng, key = random.split(rng)
 
   logging.info('Initializing model.')
-  init_data = jnp.ones((batch_size, 45, 45, 6), jnp.float32)
+  init_data = jnp.ones((config.batch_size, 45, 45, 6), jnp.float32)
   params = create_vae_model(latent_dim=16).init(key, init_data, rng)['params']
 
   state = train_state.TrainState.create(
       apply_fn=create_vae_model(latent_dim=16).apply,
       params=params,
-      tx=optax.adam(learning_rate),
+      tx=optax.adam(config.learning_rate),
   )
 
   rng, z_key, eval_rng = random.split(rng, 3)
-  z = random.normal(z_key, (32, latent_dim))
+  z = random.normal(z_key, (32, config.latent_dim))
 
-  for epoch in range(num_epochs):
-    for _ in range(steps_per_epoch_train):
+  for epoch in range(config.num_epochs):
+    for _ in range(config.steps_per_epoch_train):
       batch = next(train_ds)
       rng, key = random.split(rng)
-      state = train_step_vae(state, batch, key, latent_dim)
+      state = train_step_vae(state, batch, key, config.latent_dim)
 
     metrics, comparison, sample = eval_f_vae(
-        state.params, next(val_ds), z, eval_rng, latent_dim,
+        state.params, next(val_ds), z, eval_rng, config.latent_dim,
     )
     # vae_utils.save_image(
     #     comparison, f'results/reconstruction_{epoch}.png', nrow=8
@@ -95,19 +94,19 @@ def train_and_evaluate_vae(
         )
     )
 
-def eval_f_UNet(params, images):
+def eval_f_UNet(params, images, timestamps):
   def eval_model(unet_model):
-    recon_images = unet_model(images[0])
+    recon_images = unet_model((images[0], timestamps))
 
     mse_loss = mse_loss_fn(recon_images, images[1])
     return {'mse': mse_loss, 'loss': mse_loss}
 
   return nn.apply(eval_model, UNet())({'params': params})
 
-def train_step_UNet(state, batch):
+def train_step_UNet(state, batch, timestamps):
   def loss_fn(params):
-    recon_x = UNet.apply(
-        {'params': params}, batch[0]
+    recon_x = UNet().apply(
+        {'params': params}, (batch[0], timestamps)
     )
 
     mse_loss = mse_loss_fn(recon_x, batch[1]).mean()
@@ -120,35 +119,65 @@ def train_step_UNet(state, batch):
 def train_and_evaluate_UNet(
     train_ds,
     val_ds,
-    num_epochs,
-    steps_per_epoch_train, 
-    batch_size=32,
-    learning_rate=1e-4,
+    config: ml_collections.ConfigDict,
   ):
   """Train and evaulate pipeline."""
   rng = random.key(0)
   rng, key = random.split(rng)
 
   logging.info('Initializing model.')
-  init_data = jnp.ones((batch_size, 45, 45, 6), jnp.float32)
-  params = UNet().init(key, init_data, rng)['params']
+  init_data = (
+    jnp.ones((config.batch_size, 45, 45, 6), jnp.float32), 
+    jnp.ones((config.batch_size), jnp.float32),
+  )
+  params = UNet().init(key, init_data)['params']
 
   state = train_state.TrainState.create(
       apply_fn=UNet().apply,
       params=params,
-      tx=optax.adam(learning_rate),
+      tx=optax.adam(config.learning_rate),
   )
 
 
-  for epoch in range(num_epochs):
-    for _ in range(steps_per_epoch_train):
+  for epoch in range(config.num_epochs):
+    for _ in range(config.steps_per_epoch_train):
       batch = next(train_ds)
       rng, key = random.split(rng)
-      state = train_step_UNet(state, batch, key)
+      timestamps = random.randint(
+        key, 
+        shape=(batch[0].shape[0],), 
+        minval=0, 
+        maxval=config.timesteps,
+      )
+    
+    # Generating the noise and noisy image for this batch
+    rng, key = random.split(rng)
+    noisy_images, noise = forward_noising(key, batch[1], timestamps)
+    state = train_step_UNet(state, (noisy_images, batch[1]), timestamps)
+    val_loss = []
+    val_mse = []
 
+    # run over validation steps
+    for _ in range(config.steps_per_epoch_val):
+      batch = next(val_ds)
+      rng, key = random.split(rng)
+      timestamps = random.randint(
+        key, 
+        shape=(batch[0].shape[0],), 
+        minval=0, 
+        maxval=config.timesteps,
+      )
+    
+    # Generating the noise and noisy image for this batch
+    rng, key = random.split(rng)
+    noisy_images, noise = forward_noising(key, batch[1], timestamps)
     metrics = eval_f_UNet(
-        state.params, next(val_ds)
+        state.params, 
+        (noisy_images, batch[1]),
+        timestamps=timestamps,
     )
+    val_loss.append(metrics['loss'])
+    val_mse.append(metrics['mse'])
     # vae_utils.save_image(
     #     comparison, f'results/reconstruction_{epoch}.png', nrow=8
     # )
@@ -157,7 +186,7 @@ def train_and_evaluate_UNet(
     print(
         'eval epoch: {}, loss: {:.4f}, MSE: {:.4f}'.format(
             epoch + 1,
-            metrics['loss'],
-            metrics['mse'], 
+            np.mean(val_loss),
+            np.mean(val_mse), 
         )
     )
