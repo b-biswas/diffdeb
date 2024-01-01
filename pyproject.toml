@@ -16,6 +16,9 @@ tensorflow-probability = "*"
 tensorflow-datasets = "*"
 galcheat = "*"
 numba = "*"
+optax = "*"
+orbax = "*"
+ml_collections = "*"
 matplotlib = {version="*", optional=true}
 seaborn = {version="*", optional=true}
 pytest = {version="*", optional=true}
