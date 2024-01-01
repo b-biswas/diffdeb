@@ -18,6 +18,7 @@ def get_config_vae():
     config.batch_size=32
     config.latent_dim=16
     config.learning_rate=1e-4
+    config.model_path = "/pbs/throng/lsst/users/bbiswas/DiffDeblender/diffdeb/data/vae"
 
     return config
 
@@ -31,7 +32,7 @@ def get_config_diffusion():
   config.learning_rate = 1e-4
   config.steps_per_epoch_train = 10
   config.steps_per_epoch_val = 10
-
+  config.model_path = "/pbs/throng/lsst/users/bbiswas/DiffDeblender/diffdeb/data/UNet"
   
 
   return config

@@ -237,9 +237,9 @@ class ResnetBlock(nn.Module):
     if time_embed is not None:
       time_embed = nn.silu(time_embed)
       time_embed = nn.Dense(self.dim)(time_embed)
-      print(time_embed.shape)
+      #print(time_embed.shape)
       x = jnp.expand_dims(jnp.expand_dims(time_embed, 1), 1) + x
-      print(x.shape)
+      #print(x.shape)
     x = Block(self.dim, self.groups)(x)
     res_conv = nn.Conv(self.dim, (1, 1), padding="SAME")(inputs)
     return x + res_conv
