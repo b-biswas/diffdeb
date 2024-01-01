@@ -269,19 +269,19 @@ class UNet(nn.Module):
           (0,0),
         ),
       )
-    print(inputs.shape)
+    #print(inputs.shape)
     x = nn.Conv(self.dim // 3 * 2, (5, 5), padding="SAME")(inputs)
     time_emb = TimeEmbedding(self.dim)(time)
     
     dims = [self.dim * i for i in self.dim_scale_factor]
     pre_downsampling = []
-    print(x.shape)
+    #print(x.shape)
     # Downsampling phase
     for index, dim in enumerate(dims):
       x = ResnetBlock(dim, self.num_groups)(x, time_emb)
-      print(x.shape)
+      #print(x.shape)
       x = ResnetBlock(dim, self.num_groups)(x, time_emb)
-      print(x.shape)
+      #print(x.shape)
       att = Attention(dim)(x)
       norm = nn.GroupNorm(self.num_groups)(att)
       x = norm + x
