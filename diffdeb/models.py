@@ -1,5 +1,6 @@
 from typing import Sequence
 from flax import linen as nn
+import jax
 from jax import random
 import jax.numpy as jnp
 
@@ -64,7 +65,7 @@ class Decoder(nn.Module):
 
     z = nn.Dense(features=self.dense_layer_units)(z)
     z = nn.activation.PReLU()(z)
-    w = int(jnp.ceil(self.input_shape[0] / 2 ** (len(self.filters))))
+    w = int(self.input_shape[0] // 2 ** (len(self.filters))+1)
     z = nn.Dense(features=w * w * self.filters[-1])(z)
     z = nn.activation.PReLU()(z)
     z = z.reshape(z.shape[0], w, w, self.filters[-1])
@@ -100,9 +101,11 @@ class VAE(nn.Module):
 
   input_shape: Sequence[int]
   latent_dim: int
-  filters: Sequence[int]
-  kernels: Sequence[int]
-  dense_layer_units: int
+  encoder_filters: Sequence[int] = (32, 128, 256, 512)
+  encoder_kernels: Sequence[int] = (5, 5, 5, 5)
+  decoder_filters: Sequence[int] = (64, 96, 128)
+  decoder_kernels: Sequence[int] = (5, 5, 5)
+  dense_layer_units: int = 512
 
   # def __init__(self, latent_dim, filters, kernels, dense_layer_units, input_shape):
   #    super().__init__()
@@ -114,17 +117,17 @@ class VAE(nn.Module):
 
   def setup(self):
     self.encoder = Encoder(
-       latent_dim=self.latent_dim, 
-       filters=self.filters, 
-       kernels=self.kernels, 
-       dense_layer_units=self.dense_layer_units,
+        latent_dim=self.latent_dim, 
+        filters=self.encoder_filters, 
+        kernels=self.encoder_kernels, 
+        dense_layer_units=self.dense_layer_units,
       )
     self.decoder = Decoder(
-       latent_dim=self.latent_dim, 
-       filters=self.filters, 
-       kernels=self.kernels, 
-       dense_layer_units=self.dense_layer_units, 
-       input_shape=self.input_shape,
+        latent_dim=self.latent_dim, 
+        input_shape=self.input_shape, 
+        filters=self.decoder_filters, 
+        kernels=self.decoder_kernels, 
+        dense_layer_units=self.dense_layer_units, 
       )
 
   def __call__(self, x, z_rng):
@@ -136,23 +139,29 @@ class VAE(nn.Module):
   def generate(self, z):
     return self.decoder(z)
 
+@jax.jit
 def reparameterize(rng, mean, logvar):
   std = jnp.exp(0.5 * logvar)
   eps = random.normal(rng, logvar.shape)
   return mean + eps * std
 
-def create_vae_model(latent_dim,
-    filters=[15, 15, 15, 15], 
-    kernels=[3, 3, 3, 3], 
-    dense_layer_units=120, 
-    input_shape=[45, 45, 6],
+def create_vae_model(
+    latent_dim,
+    input_shape,
+    encoder_filters,
+    encoder_kernels,
+    decoder_filters,
+    decoder_kernels,
+    dense_layer_units,
   ):
   return VAE(
     latent_dim=latent_dim, 
-    filters=filters, 
-    kernels=kernels, 
-    dense_layer_units=dense_layer_units, 
     input_shape=input_shape,
+    encoder_filters=encoder_filters,
+    encoder_kernels=encoder_kernels,
+    decoder_filters=decoder_filters,
+    decoder_kernels=decoder_kernels,
+    dense_layer_units=dense_layer_units,
   )
 
 class SinusoidalEmbedding(nn.Module):
@@ -235,16 +244,14 @@ class ResnetBlock(nn.Module):
     if time_embed is not None:
       time_embed = nn.silu(time_embed)
       time_embed = nn.Dense(self.dim)(time_embed)
-      #print(time_embed.shape)
       x = jnp.expand_dims(jnp.expand_dims(time_embed, 1), 1) + x
-      #print(x.shape)
     x = Block(self.dim, self.groups)(x)
     res_conv = nn.Conv(self.dim, (1, 1), padding="SAME")(inputs)
     return x + res_conv
   
 class UNet(nn.Module):
   dim: int = 8 # controls the number of channels in the UNet layers
-  dim_scale_factor: tuple = (1, 2, 4, 8)
+  dim_scale_factor: tuple = (1, 2, 4)
   num_groups: int = 8
 
   @nn.compact
@@ -267,21 +274,17 @@ class UNet(nn.Module):
           (0,0),
         ),
       )
-    #print(inputs.shape)
     x = nn.Conv(self.dim // 3 * 2, (5, 5), padding="SAME")(inputs)
     time_emb = TimeEmbedding(self.dim)(time)
     
     dims = [self.dim * i for i in self.dim_scale_factor]
     pre_downsampling = []
-    #print(x.shape)
     # Downsampling phase
     for index, dim in enumerate(dims):
       x = ResnetBlock(dim, self.num_groups)(x, time_emb)
-      #print(x.shape)
-      x = ResnetBlock(dim, self.num_groups)(x, time_emb)
-      #print(x.shape)
-      att = Attention(dim)(x)
-      norm = nn.GroupNorm(self.num_groups)(att)
+      #x = ResnetBlock(dim, self.num_groups)(x, time_emb)
+      #x = Attention(dim)(x)
+      norm = nn.GroupNorm(self.num_groups)(x)
       x = norm + x
       # Saving this output for residual connection with the upsampling layer
       pre_downsampling.append(x)
@@ -299,9 +302,9 @@ class UNet(nn.Module):
     for index, dim in enumerate(reversed(dims)):
       x = jnp.concatenate([pre_downsampling.pop(), x], -1)
       x = ResnetBlock(dim, self.num_groups)(x, time_emb)
-      x = ResnetBlock(dim, self.num_groups)(x, time_emb)
-      att = Attention(dim)(x)
-      norm = nn.GroupNorm(self.num_groups)(att)
+      #x = ResnetBlock(dim, self.num_groups)(x, time_emb)
+      #x = Attention(dim)(x)
+      norm = nn.GroupNorm(self.num_groups)(x)
       x = norm + x
       if index != len(dims) - 1:
         x = nn.ConvTranspose(dim, (5,5), (2,2))(x)
