@@ -87,13 +87,11 @@ class Decoder(nn.Module):
     # keep the output of the last layer as relu as we want only positive flux values.
     z = nn.ConvTranspose(self.input_shape[-1], (3, 3), padding="SAME")(z)
     z = nn.activation.relu(z)
-    print(z.shape)
 
     # In case the last convolutional layer does not provide an image of the size of the input image, cropp it.
     cropping = z.shape[1] - self.input_shape[0]
     if cropping > 0:
         z=z[:, 0:self.input_shape[0], 0:self.input_shape[1]]
-    print(z.shape)
     return z
 
 

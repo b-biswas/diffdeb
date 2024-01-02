@@ -124,6 +124,7 @@ def train_and_evaluate_vae(
         )
     )
     if metrics["val loss"]<min_val_loss:
+      print("Saving model at "+config.model_path)
       min_val_loss = metrics["val loss"]
       ckpt = {'model': state, 'config': config}
 
@@ -255,7 +256,7 @@ def train_and_evaluate_UNet(
     )
 
     if metrics["val loss"]<min_val_loss:
-
+      print("Saving model at "+config.model_path)
       min_val_loss = metrics["val loss"]
       ckpt = {'model': state, 'config': config}
 
