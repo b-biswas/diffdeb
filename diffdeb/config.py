@@ -1,5 +1,7 @@
 
 import ml_collections
+import numpy as np
+from typing import Sequence
 
 
 def get_config_vae():
@@ -12,12 +14,18 @@ def get_config_vae():
     config.linear_norm_coeff = 10000
 
     # training config
-    config.num_epochs = 5
-    config.steps_per_epoch_train = 10
-    config.steps_per_epoch_val = 10
-    config.batch_size=32
+    config.num_epochs = 100
+    config.steps_per_epoch_train = 1500
+    config.steps_per_epoch_val = 500
+    config.batch_size=100
     config.latent_dim=16
     config.learning_rate=1e-4
+    config.input_shape=(45, 45, 6) # stamp size should be an odd number
+    config.encoder_filters=(32, 128, 256, 512)
+    config.decoder_filters=(64, 96, 128)
+    config.encoder_kernels=(5, 5, 5, 5)
+    config.decoder_kernels=(5, 5, 5)
+    config.dense_layer_units=512
     config.model_path = "/pbs/throng/lsst/users/bbiswas/DiffDeblender/diffdeb/data/vae"
 
     return config
@@ -27,7 +35,7 @@ def get_config_diffusion():
   config = ml_collections.ConfigDict()
   config.linear_norm_coeff = 10000
   config.timesteps = 200
-  config.batch_size = 3
+  config.batch_size = 50
   config.num_epochs = 10
   config.learning_rate = 1e-4
   config.steps_per_epoch_train = 10
