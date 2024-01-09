@@ -35,11 +35,11 @@ def get_config_diffusion():
   config = ml_collections.ConfigDict()
   config.linear_norm_coeff = 10000
   config.timesteps = 200
-  config.batch_size = 50
-  config.num_epochs = 10
+  config.num_epochs = 50
+  config.steps_per_epoch_train = 1500
+  config.steps_per_epoch_val = 500
+  config.batch_size=100
   config.learning_rate = 1e-4
-  config.steps_per_epoch_train = 10
-  config.steps_per_epoch_val = 10
   config.model_path = "/pbs/throng/lsst/users/bbiswas/DiffDeblender/diffdeb/data/UNet"
   
 
