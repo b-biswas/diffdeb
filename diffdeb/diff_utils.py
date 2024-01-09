@@ -19,7 +19,7 @@ one_minus_sqrt_alpha_bar = jnp.sqrt(1 - alpha_bar)
 # Implement noising logic according to reparameterization trick
 @jax.jit
 def forward_noising(key, x_0, t):
-  noise = random.normal(key, x_0.shape)  
+  noise = random.normal(key, x_0.shape)/10
   reshaped_sqrt_alpha_bar_t = jnp.reshape(jnp.take(sqrt_alpha_bar, t), (-1, 1, 1, 1))
   reshaped_one_minus_sqrt_alpha_bar_t = jnp.reshape(jnp.take(one_minus_sqrt_alpha_bar, t), (-1, 1, 1, 1))
   noisy_image = reshaped_sqrt_alpha_bar_t  * x_0 + reshaped_one_minus_sqrt_alpha_bar_t  * noise
