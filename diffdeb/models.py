@@ -32,12 +32,27 @@ class Encoder(nn.Module):
         )(x)
         x = nn.activation.PReLU()(x)
 
-    x = x.reshape(x.shape[0], -1)
-    x = nn.Dense(features=self.dense_layer_units)(x)
-    x = nn.activation.PReLU()(x)
+    
+    if self.dense_layer_units !=0:
+      x = x.reshape(x.shape[0], -1)
+      x = nn.Dense(features=self.dense_layer_units)(x)
+      x = nn.activation.PReLU()(x)
 
-    mean_x = nn.Dense(features=self.latent_dim, name='latent_mean')(x)
-    logvar_x = nn.Dense(features=self.latent_dim, name='latent_logvar')(x)
+      mean_x = nn.Dense(features=self.latent_dim, name='latent_mean')(x)
+      logvar_x = nn.Dense(features=self.latent_dim, name='latent_logvar')(x)
+    else:
+      mean_x = nn.Conv(
+            features=1,
+            kernel_size=(3, 3),
+            padding="SAME",
+        )(x)
+      logvar_x = nn.Conv(
+            features=1,
+            kernel_size=(3, 3),
+            padding="SAME",
+        )(x)
+      logvar_x = - nn.activation.relu(logvar_x)
+      
     return mean_x, logvar_x
 
 
@@ -63,12 +78,14 @@ class Decoder(nn.Module):
     # z = nn.relu(z)
     # z = nn.Dense(784, name='fc2')(z)
 
-    z = nn.Dense(features=self.dense_layer_units)(z)
-    z = nn.activation.PReLU()(z)
-    w = int(self.input_shape[0] // 2 ** (len(self.filters))+1)
-    z = nn.Dense(features=w * w * self.filters[-1])(z)
-    z = nn.activation.PReLU()(z)
-    z = z.reshape(z.shape[0], w, w, self.filters[-1])
+    if self.dense_layer_units!=0:
+      z = nn.Dense(features=self.dense_layer_units)(z)
+      z = nn.activation.PReLU()(z)
+      w = int(self.input_shape[0] // 2 ** (len(self.filters))+1)
+      z = nn.Dense(features=w * w * self.filters[-1])(z)
+      z = nn.activation.PReLU()(z)
+      z = z.reshape(z.shape[0], w, w, self.filters[-1])
+
     for i in range(len(self.filters) - 1, -1, -1):
         z = nn.ConvTranspose(
             features=self.filters[i],
