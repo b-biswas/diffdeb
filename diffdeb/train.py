@@ -115,11 +115,18 @@ def train_and_evaluate_vae(
         config.dense_layer_units
       ).apply,
       params=params,
-      tx=optax.adam(config.learning_rate),
+      tx=optax.chain(
+      optax.clip(.1),
+      optax.adam(
+        learning_rate=optax.exponential_decay(
+          config.learning_rate,
+          transition_steps=config.steps_per_epoch_train*30,
+          decay_rate=.1,
+          end_value=1e-7,
+        ),
+      ),
+    ),
   )
-
-  #rng, z_key, eval_rng = random.split(rng, 3)
-  #z = random.normal(z_key, (32, config.latent_dim))
   
   min_val_loss = np.inf
   logging.info('Training started...')
@@ -251,9 +258,11 @@ def train_and_evaluate_UNet(
   params = UNet().init(key, init_data)['params']
 
   state = train_state.TrainState.create(
-      apply_fn=UNet().apply,
-      params=params,
-      tx=optax.adam(
+    apply_fn=UNet().apply,
+    params=params,
+    tx=optax.chain(
+      optax.clip(.1),
+      optax.adam(
         learning_rate=optax.exponential_decay(
           config.learning_rate,
           transition_steps=config.steps_per_epoch_train*30,
@@ -261,7 +270,10 @@ def train_and_evaluate_UNet(
           end_value=1e-7,
         ),
       ),
+    ),
   )
+      
+
   min_val_loss = np.inf
 
   logging.info("start training...")
