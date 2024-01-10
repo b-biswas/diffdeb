@@ -10,9 +10,9 @@ def mse_loss_fn(prediction, truth):
   return jnp.sum(((prediction-truth) ** 2)/(truth+0.0001))
 
 @jax.jit
-def vae_train_loss(prediction, truth, mean, logvar):
+def vae_train_loss(prediction, truth, mean, logvar, kl_weight):
   mse_loss = mse_loss_fn(prediction, truth).mean()
   kld_loss = kl_divergence(mean, logvar).mean()
-  loss = mse_loss + kld_loss
+  loss = mse_loss + kl_weight*kld_loss
 
   return loss

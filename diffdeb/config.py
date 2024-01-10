@@ -19,13 +19,14 @@ def get_config_vae():
     config.steps_per_epoch_val = 500
     config.batch_size=100
     config.latent_dim=16
-    config.learning_rate=1e-4
+    config.learning_rate=1e-5
+    config.kl_weight = 0.01
     config.input_shape=(45, 45, 6) # stamp size should be an odd number
-    config.encoder_filters=(32, 64, 128, 256)
+    config.encoder_filters=(32, 64, 128)
     config.decoder_filters=(16, 32, 64)
-    config.encoder_kernels=(5, 5, 5, 5)
+    config.encoder_kernels=(5, 5, 5)
     config.decoder_kernels=(5, 5, 5)
-    config.dense_layer_units=128
+    config.dense_layer_units=0
     config.model_path = "/pbs/throng/lsst/users/bbiswas/DiffDeblender/diffdeb/data/vae"
 
     return config

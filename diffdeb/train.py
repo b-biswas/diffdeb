@@ -22,13 +22,13 @@ import optax
 logging.basicConfig(level=logging.INFO)
 
 @jax.jit
-def compute_metrics_vae(recon_x, x, mean, logvar):
+def compute_metrics_vae(recon_x, x, mean, logvar, kl_weight):
   mse_loss = mse_loss_fn(prediction=recon_x, truth=x).mean()
   kld_loss = kl_divergence(mean, logvar).mean()
-  return {'mse': mse_loss, 'kld': kld_loss, 'loss': mse_loss + kld_loss}
+  return {'mse': mse_loss, 'kld': kld_loss, 'loss': mse_loss + kl_weight*kld_loss}
 
 @partial(jax.jit, static_argnames=['latent_dim', 'input_shape', 'encoder_filters', 'encoder_kernels', 'decoder_filters', 'decoder_kernels', 'dense_layer_units'])
-def train_step_vae(state, batch, z_rng, latent_dim, input_shape, encoder_filters, encoder_kernels, decoder_filters, decoder_kernels, dense_layer_units):
+def train_step_vae(state, batch, z_rng, kl_weight, latent_dim, input_shape, encoder_filters, encoder_kernels, decoder_filters, decoder_kernels, dense_layer_units):
   def loss_fn(params):
     recon_x, mean, logvar = create_vae_model(
       latent_dim, 
@@ -45,6 +45,7 @@ def train_step_vae(state, batch, z_rng, latent_dim, input_shape, encoder_filters
       truth=batch[1],
       mean=mean, 
       logvar=logvar,
+      kl_weight=kl_weight,
     )
     return loss
 
@@ -53,10 +54,10 @@ def train_step_vae(state, batch, z_rng, latent_dim, input_shape, encoder_filters
   return state.apply_gradients(grads=grads), loss
 
 @partial(jax.jit, static_argnames=['latent_dim', 'input_shape', 'encoder_filters', 'encoder_kernels', 'decoder_filters', 'decoder_kernels', 'dense_layer_units'])
-def eval_f_vae(params, images, z_rng, latent_dim, input_shape, encoder_filters, encoder_kernels, decoder_filters, decoder_kernels, dense_layer_units):
+def eval_f_vae(params, images, z_rng, kl_weight, latent_dim, input_shape, encoder_filters, encoder_kernels, decoder_filters, decoder_kernels, dense_layer_units):
   def eval_model(vae):
     recon_images, mean, logvar = vae(images[0], z_rng)
-    metrics = compute_metrics_vae(recon_images, images[1], mean, logvar)
+    metrics = compute_metrics_vae(recon_images, images[1], mean, logvar, kl_weight)
     return metrics
 
   return nn.apply(
@@ -144,8 +145,9 @@ def train_and_evaluate_vae(
       state, batch_train_loss = train_step_vae(
         state, 
         batch, 
-        key, 
-        config.latent_dim, 
+        z_rng=key, 
+        kl_weight=config.kl_weight,
+        latent_dim=config.latent_dim, 
         input_shape=config.input_shape,
         encoder_filters=config.encoder_filters,
         encoder_kernels=config.encoder_kernels,
@@ -171,6 +173,7 @@ def train_and_evaluate_vae(
         params=state.params, 
         images=batch, 
         z_rng=key, 
+        kl_weight=config.kl_weight,
         latent_dim=config.latent_dim,
         input_shape=config.input_shape, 
         encoder_filters=config.encoder_filters,
