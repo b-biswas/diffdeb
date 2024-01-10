@@ -1,3 +1,5 @@
+import os 
+import shutil 
 from diffdeb.losses import kl_divergence, mse_loss_fn, vae_train_loss
 from diffdeb.models import create_vae_model, UNet
 import jax 
@@ -35,7 +37,7 @@ def train_step_vae(state, batch, z_rng, latent_dim, input_shape, encoder_filters
       encoder_kernels, 
       decoder_filters,
       decoder_kernels, 
-      dense_layer_units
+      dense_layer_units,
     ).apply({'params': params}, batch[0], z_rng)
 
     loss=vae_train_loss(
@@ -46,25 +48,19 @@ def train_step_vae(state, batch, z_rng, latent_dim, input_shape, encoder_filters
     )
     return loss
 
-  loss, grads = jax.value_and_grad(loss_fn, argnums=0)(state.params)
-  return state.apply_gradients(grads=grads), loss.mean()
+  loss, grads = jax.value_and_grad(loss_fn)(state.params)
+
+  return state.apply_gradients(grads=grads), loss
 
 @partial(jax.jit, static_argnames=['latent_dim', 'input_shape', 'encoder_filters', 'encoder_kernels', 'decoder_filters', 'decoder_kernels', 'dense_layer_units'])
 def eval_f_vae(params, images, z_rng, latent_dim, input_shape, encoder_filters, encoder_kernels, decoder_filters, decoder_kernels, dense_layer_units):
   def eval_model(vae):
     recon_images, mean, logvar = vae(images[0], z_rng)
-    # comparison = jnp.concatenate([
-    #     images[1].reshape(-1, 45, 45, 6),
-    #     recon_images.reshape(-1, 45, 45, 6),
-    # ])
-
-    # generate_images = vae.generate(z)
-    # generate_images = generate_images.reshape(-1, 45, 45, 6)
     metrics = compute_metrics_vae(recon_images, images[1], mean, logvar)
-    #return metrics, comparison, generate_images
     return metrics
 
-  return nn.apply(eval_model, create_vae_model(
+  return nn.apply(
+    eval_model, create_vae_model(
       latent_dim, 
       input_shape, 
       encoder_filters, 
@@ -72,7 +68,8 @@ def eval_f_vae(params, images, z_rng, latent_dim, input_shape, encoder_filters, 
       decoder_filters,
       decoder_kernels, 
       dense_layer_units,
-    ))({'params': params})
+    )
+  )({'params': params})
 
 def train_and_evaluate_vae(
     train_tfds,
@@ -84,6 +81,10 @@ def train_and_evaluate_vae(
   def compute_av(cumulative, current, num_of_steps):
     return cumulative + current / num_of_steps
   
+  # Define checkpoint
+  if os.path.exists(config.model_path):
+    shutil.rmtree(config.model_path)
+
   orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
   options = orbax.checkpoint.CheckpointManagerOptions(max_to_keep=1, create=True)
   checkpoint_manager = orbax.checkpoint.CheckpointManager(
@@ -132,9 +133,11 @@ def train_and_evaluate_vae(
   logging.info('Training started...')
   metrics = {"val loss": [], "val mse": [], "val kld": [], "train loss": []}
   for epoch in range(config.num_epochs):
-    train_ds = train_tfds.as_numpy_iterator()
     start = time.time()
+    train_ds = train_tfds.as_numpy_iterator()
     metrics["train loss"].append(0.0)
+
+    # Training loops 
     for _ in range(config.steps_per_epoch_train):
       batch = next(train_ds)
       rng, key = random.split(rng)
@@ -155,6 +158,8 @@ def train_and_evaluate_vae(
         batch_train_loss, 
         config.steps_per_epoch_train,
       )
+
+    # Validation loops
     val_ds = val_tfds.as_numpy_iterator()
     for loss_name in ["loss", "mse", "kld"]:
       metrics["val "+loss_name].append(0.0)
@@ -175,8 +180,8 @@ def train_and_evaluate_vae(
         dense_layer_units=config.dense_layer_units,
       )
       for loss_name in ["loss", "mse", "kld"]:
-        metrics["val "+loss_name][epoch] = compute_av(
-          metrics["val "+loss_name][epoch], 
+        metrics["val " + loss_name][epoch] = compute_av(
+          metrics["val " + loss_name][epoch], 
           batch_metrics[loss_name], 
           config.steps_per_epoch_val,
         )
@@ -185,7 +190,6 @@ def train_and_evaluate_vae(
     #     comparison, f'results/reconstruction_{epoch}.png', nrow=8
     # )
     # vae_utils.save_image(sample, f'results/sample_{epoch}.png', nrow=8)
-    logging.info('Previous minimum validation loss: {:.7f}'.format(min_val_loss))
     logging.info(
         'eval epoch: {}, train loss: {:.7f}, val loss: {:.7f}, val MSE: {:.7f}, val kld: {:.7f}'.format(
             epoch + 1,
@@ -195,18 +199,19 @@ def train_and_evaluate_vae(
             metrics["val kld"][epoch],
         )
     )
-    stop = time.time()
-    logging.info('Duration {:.5f}'.format(stop-start))
+    end = time.time()
+    logging.info("\nTotal time taken: {} seconds".format(end - start))
+    if jnp.isnan(metrics["val loss"][epoch]):
+      logging.info("\nnan loss, terminating training")
+      break
     if metrics["val loss"][epoch] < min_val_loss:
-      
+      logging.info("\nVal loss improved from: {:.7f} to {:.7f}".format(min_val_loss, metrics["val loss"][epoch]))
       min_val_loss = metrics["val loss"][epoch]
-      ckpt = {'model': state, 'config': config}
+      ckpt = {'model': state, 'config': config, 'metrics': metrics}
 
       save_args = orbax_utils.save_args_from_target(ckpt)
       checkpoint_manager.save(epoch, ckpt, save_kwargs={'save_args': save_args})
-      logging.info("Model saved at "+config.model_path)
-
-
+      logging.info("Model saved at " + config.model_path)
 
 @jax.jit
 def eval_f_UNet(params, images, timestamps):
@@ -229,7 +234,7 @@ def train_step_UNet(state, batch, timestamps):
     return mse_loss
 
   loss, grads = jax.value_and_grad(loss_fn, argnums=0)(state.params)
-  return state.apply_gradients(grads=grads), jnp.mean(loss)
+  return state.apply_gradients(grads=grads), loss
 
 def train_and_evaluate_UNet(
     train_tfds,
@@ -244,7 +249,10 @@ def train_and_evaluate_UNet(
   rng = random.key(0)
   rng, key = random.split(rng)
 
-  
+  # Define checkpoint
+  if os.path.exists(config.model_path):
+    shutil.rmtree(config.model_path)
+
   orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
   options = orbax.checkpoint.CheckpointManagerOptions(max_to_keep=1, create=True)
   checkpoint_manager = orbax.checkpoint.CheckpointManager(
@@ -277,11 +285,14 @@ def train_and_evaluate_UNet(
   min_val_loss = np.inf
 
   logging.info("start training...")
-
+  
+  metrics = {"train loss": [], "val loss":[]} 
   for epoch in range(config.num_epochs):
+    start = time.time()
     train_ds = train_tfds.as_numpy_iterator()
     # run over training steps
-    train_loss = []
+    
+    current_epoch_train_loss = 0
     for _ in range(config.steps_per_epoch_train):
       batch = next(train_ds)
       rng, key = random.split(rng)
@@ -296,12 +307,18 @@ def train_and_evaluate_UNet(
       rng, key = random.split(rng)
       noisy_images, noise = forward_noising(key, batch[1], timestamps)
       state, batch_train_loss = train_step_UNet(state, (noisy_images, batch[1]), timestamps)
-      train_loss.append(batch_train_loss)
+      current_epoch_train_loss = compute_av(
+        current_epoch_train_loss, 
+        batch_train_loss, 
+        config.steps_per_epoch_train,
+      )
+      metrics["train loss"].append(current_epoch_train_loss)
 
     # run over validation steps
-    metrics = {"val loss": 0.0} 
+    metrics["val loss"].append(0.0)
     for _ in range(config.steps_per_epoch_val):
       val_ds = val_tfds.as_numpy_iterator()
+      batch = next(val_ds)
       rng, key = random.split(rng)
       timestamps = random.randint(
         key, 
@@ -318,30 +335,30 @@ def train_and_evaluate_UNet(
           (noisy_images, batch[1]),
           timestamps=timestamps,
       )
-      metrics["val loss"] = compute_av(
-        metrics["val loss"], 
+      metrics["val loss"][epoch] = compute_av(
+        metrics["val loss"][epoch], 
         batch_metrics["loss"], 
         config.steps_per_epoch_val,
       )
-
-    metrics["train loss"] = np.mean(train_loss)
     # vae_utils.save_image(
     #     comparison, f'results/reconstruction_{epoch}.png', nrow=8
     # )
     # vae_utils.save_image(sample, f'results/sample_{epoch}.png', nrow=8)
-    logging.info('Previous minimum validation loss; {:.5f}'.format(min_val_loss))
+    #logging.info('Previous minimum validation loss; {:.5f}'.format(min_val_loss))
     logging.info(
-        'eval epoch: {}, train loss: {:.4f}, val loss: {:.4f}'.format(
+        '\n\neval epoch: {}, train loss: {:.4f}, val loss: {:.4f}'.format(
             epoch + 1,
-            metrics["train loss"],
-            metrics["val loss"],
+            metrics["train loss"][epoch],
+            metrics["val loss"][epoch],
         )
     )
+    end = time.time()
+    logging.info("\nTotal time taken: {} seconds".format(end - start))
+    if metrics["val loss"][epoch]<min_val_loss:
+      logging.info("\nVal loss improved from: {:.7f} to {:.7f}".format(min_val_loss, metrics["val loss"][epoch]))
 
-    if metrics["val loss"]<min_val_loss:
-      logging.info("Saving model at "+config.model_path)
-      min_val_loss = metrics["val loss"]
-      ckpt = {'model': state, 'config': config}
+      min_val_loss = metrics["val loss"][epoch]
+      ckpt = {'model': state, 'config': config, 'metrics': metrics}
 
       save_args = orbax_utils.save_args_from_target(ckpt)
       checkpoint_manager.save(epoch, ckpt, save_kwargs={'save_args': save_args})
