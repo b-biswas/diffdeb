@@ -42,18 +42,18 @@ def train_step_vae(state, batch, z_rng, kl_weight, latent_dim, input_shape, enco
       dense_layer_units,
     ).apply({'params': params}, batch[0], z_rng)
 
-    loss=vae_train_loss(
+    loss, mse_loss, kld_loss=vae_train_loss(
       prediction=recon_x, 
       truth=batch[1],
       mean=mean, 
       logvar=logvar,
       kl_weight=kl_weight,
     )
-    return loss
+    return loss, (mse_loss, kld_loss)
 
-  loss, grads = jax.value_and_grad(loss_fn)(state.params)
+  (loss, (mse_loss, kld_loss)), grads = jax.value_and_grad(loss_fn, has_aux=True)(state.params)
 
-  return state.apply_gradients(grads=grads), loss
+  return state.apply_gradients(grads=grads), (loss, mse_loss, kld_loss)
 
 @partial(jax.jit, static_argnames=['latent_dim', 'input_shape', 'encoder_filters', 'encoder_kernels', 'decoder_filters', 'decoder_kernels', 'dense_layer_units'])
 def eval_f_vae(params, images, z_rng, kl_weight, latent_dim, input_shape, encoder_filters, encoder_kernels, decoder_filters, decoder_kernels, dense_layer_units):
@@ -134,17 +134,19 @@ def train_and_evaluate_vae(
   
   min_val_loss = np.inf
   logging.info('Training started...')
-  metrics = {"val loss": [], "val mse": [], "val kld": [], "train loss": []}
+  metrics = {"val loss": [], "val mse": [], "val kld": [], "train loss": [], "train mse": [], "train kld": []}
   for epoch in range(config.num_epochs):
     start = time.time()
     train_ds = train_tfds.as_numpy_iterator()
     metrics["train loss"].append(0.0)
+    metrics["train kld"].append(0.0)
+    metrics["train mse"].append(0.0)
 
     # Training loops 
     for _ in range(config.steps_per_epoch_train):
       batch = next(train_ds)
       rng, key = random.split(rng)
-      state, batch_train_loss = train_step_vae(
+      state, batch_losses = train_step_vae(
         state, 
         batch, 
         z_rng=key, 
@@ -157,11 +159,13 @@ def train_and_evaluate_vae(
         decoder_kernels=config.decoder_kernels,
         dense_layer_units=config.dense_layer_units,
       )
-      metrics["train loss"][epoch] = compute_av(
-        metrics["train loss"][epoch], 
-        batch_train_loss, 
-        config.steps_per_epoch_train,
-      )
+      
+      for i, loss_name in enumerate(["loss", "mse", "kld"]):
+        metrics[f"train {loss_name}"][epoch] = compute_av(
+            metrics[f"train {loss_name}"][epoch], 
+            batch_losses[i], 
+            config.steps_per_epoch_train,
+        )
 
     # Validation loops
     val_ds = val_tfds.as_numpy_iterator()
@@ -196,9 +200,11 @@ def train_and_evaluate_vae(
     # )
     # vae_utils.save_image(sample, f'results/sample_{epoch}.png', nrow=8)
     logging.info(
-        'eval epoch: {}, train loss: {:.7f}, val loss: {:.7f}, val MSE: {:.7f}, val kld: {:.7f}'.format(
+        'eval epoch: {}, train loss: {:.7f}, train mse: {:.7f}, train kld: {:.7f}, val loss: {:.7f}, val MSE: {:.7f}, val kld: {:.7f}'.format(
             epoch + 1,
             metrics["train loss"][epoch],
+            metrics["train mse"][epoch],
+            metrics["train kld"][epoch],
             metrics["val loss"][epoch],
             metrics["val mse"][epoch], 
             metrics["val kld"][epoch],
