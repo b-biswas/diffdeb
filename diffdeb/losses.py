@@ -7,7 +7,7 @@ def kl_divergence(mean, logvar):
 
 @jax.vmap
 def mse_loss_fn(prediction, truth):
-  return jnp.sum(((prediction-truth) ** 2)/(truth+0.0001))
+  return jnp.sum(((prediction-truth) ** 2))
 
 @jax.jit
 def vae_train_loss(prediction, truth, mean, logvar, kl_weight):
