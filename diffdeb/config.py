@@ -8,27 +8,29 @@ def get_config_vae():
     """Get the default hyperparameter configuration."""
     config = ml_collections.ConfigDict()
 
-    # architecture config
-    config.latents = 20
+    # User config
+    config.model_path = "/pbs/throng/lsst/users/bbiswas/DiffDeblender/diffdeb/data/vae"
 
+    # Normalization config
     config.linear_norm_coeff = 10000
 
-    # training config
-    config.num_epochs = 30
-    config.steps_per_epoch_train = 1500
-    config.steps_per_epoch_val = 500
-    config.batch_size=100
+    # Architecture config 
     config.latent_dim=16
-    config.learning_rate=1e-5
-    config.kl_weight = 0.01
+    config.learning_rate=1e-4
+    config.kl_weight = .001
     config.input_shape=(45, 45, 6) # stamp size should be an odd number
     config.encoder_filters=(32, 64, 128)
     config.decoder_filters=(16, 32, 64)
     config.encoder_kernels=(5, 5, 5)
     config.decoder_kernels=(5, 5, 5)
     config.dense_layer_units=0
-    config.model_path = "/pbs/throng/lsst/users/bbiswas/DiffDeblender/diffdeb/data/vae"
 
+    # training config
+    config.num_epochs = 30
+    config.steps_per_epoch_train = 1500
+    config.steps_per_epoch_val = 500
+    config.batch_size=100
+  
     return config
 
 def get_config_diffusion():

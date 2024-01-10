@@ -14,5 +14,5 @@ def vae_train_loss(prediction, truth, mean, logvar, kl_weight):
   mse_loss = mse_loss_fn(prediction, truth).mean()
   kld_loss = kl_divergence(mean, logvar).mean()
   loss = mse_loss + kl_weight*kld_loss
-
-  return loss
+  #loss = mse_loss
+  return loss , mse_loss, kld_loss
