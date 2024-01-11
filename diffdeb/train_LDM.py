@@ -153,6 +153,7 @@ def train_and_evaluate_LDM(
                 encoder_kernels=config.vae_config.encoder_kernels,
                 dense_layer_units=config.vae_config.dense_layer_units,
             )
+            rng, key = random.split(rng)
             noisy_images, noise = forward_noising(key, latent_batch, timestamps)
 
             # Train step.
@@ -166,7 +167,7 @@ def train_and_evaluate_LDM(
                 batch_train_loss,
                 config.diffusion_config.steps_per_epoch_train,
             )
-            metrics["train loss"].append(current_epoch_train_loss)
+        metrics["train loss"].append(current_epoch_train_loss)
 
         # Loop over validation steps.
         metrics["val loss"].append(0.0)
@@ -192,6 +193,7 @@ def train_and_evaluate_LDM(
                 encoder_kernels=config.vae_config.encoder_kernels,
                 dense_layer_units=config.vae_config.dense_layer_units,
             )
+            rng, key = random.split(rng)
             noisy_images, noise = forward_noising(key, latent_batch, timestamps)
 
             # Eval step.
