@@ -1,12 +1,10 @@
-import tensorflow_datasets as tfds
-import dm_pix as pix
-import os 
+import os
 
-import jax
-from jax import random
+import galcheat
 import jax.numpy as jnp
 import tensorflow as tf
-import galcheat
+import tensorflow_datasets as tfds
+from jax import random
 
 key = random.PRNGKey(9)
 
@@ -101,7 +99,8 @@ class CatsimDataset(tfds.core.GeneratorBasedBuilder):
             features=tfds.features.FeaturesDict(
                 {
                     "isolated_gal_stamps": tfds.features.Tensor(
-                        shape=(45, 45, len(survey.available_filters)), dtype=tf.dtypes.float32,
+                        shape=(45, 45, len(survey.available_filters)),
+                        dtype=tf.dtypes.float32,
                     ),
                     "blended_gal_stamps": tfds.features.Tensor(
                         shape=(45, 45, len(survey.available_filters)),
@@ -149,6 +148,7 @@ class CatsimDataset(tfds.core.GeneratorBasedBuilder):
                 0
             ].astype("float32")
             yield key, example
+
 
 def loadCATSIMDataset(
     train_data_dir,
@@ -291,4 +291,3 @@ def batched_CATSIMDataset(
     ds_val = preprocess_batch(ds=ds[tfds.Split.VALIDATION])
 
     return ds_train, ds_val
-
