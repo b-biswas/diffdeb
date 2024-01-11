@@ -268,7 +268,7 @@ class ResnetBlock(nn.Module):
   
 class UNet(nn.Module):
   dim: int = 8 # controls the number of channels in the UNet layers
-  dim_scale_factor: tuple = (1, 2, 4)
+  dim_scale_factor: tuple = (1, 2)
   num_groups: int = 8
 
   @nn.compact
