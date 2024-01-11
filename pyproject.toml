@@ -18,6 +18,8 @@ galcheat = "*"
 numba = "*"
 optax = "*"
 orbax = "*"
+dm-pix = "*"
+tensorflow = "*"
 ml_collections = "*"
 matplotlib = {version="*", optional=true}
 seaborn = {version="*", optional=true}
