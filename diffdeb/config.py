@@ -60,7 +60,7 @@ def get_config_LDM():
     config.vae_config = get_config_vae()
     config.diffusion_config = get_config_diffusion()
 
-    if config.diffusion_config.linear_norm_coeff == config.vae_config.linear_norm_coeff:
+    if config.diffusion_config.linear_norm_coeff != config.vae_config.linear_norm_coeff:
         raise ValueError("Linear norm should be the same for both Encoder and UNet")
 
     return config
