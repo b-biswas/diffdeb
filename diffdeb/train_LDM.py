@@ -13,7 +13,7 @@ import orbax
 from flax.training import orbax_utils, train_state
 from jax import random
 
-from diffdeb.diff_utils import forward_noising
+from diffdeb.diffusion import forward_noising
 from diffdeb.load_weights import load_model_weights
 from diffdeb.models import Encoder, UNet, reparameterize
 from diffdeb.train_UNet import eval_f_UNet, train_step_UNet
