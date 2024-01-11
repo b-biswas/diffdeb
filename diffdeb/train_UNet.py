@@ -57,7 +57,7 @@ def train_and_evaluate_UNet(
     rng = random.key(0)
     rng, key = random.split(rng)
 
-    # Define checkpoint
+    # Define checkpoint to save the trained model.
     if os.path.exists(config.model_path):
         shutil.rmtree(config.model_path)
 
@@ -67,6 +67,7 @@ def train_and_evaluate_UNet(
         config.model_path, orbax_checkpointer, options
     )
 
+    # Initialize the UNet.
     logging.info("Initializing model.")
     init_data = (
         jnp.ones((config.batch_size, 45, 45, 6), jnp.float32),
@@ -74,6 +75,7 @@ def train_and_evaluate_UNet(
     )
     params = UNet().init(key, init_data)["params"]
 
+    # Create train state.
     state = train_state.TrainState.create(
         apply_fn=UNet().apply,
         params=params,
@@ -90,16 +92,15 @@ def train_and_evaluate_UNet(
         ),
     )
 
-    min_val_loss = np.inf
-
+    # Training epochs.
     logging.info("start training...")
-
+    min_val_loss = np.inf
     metrics = {"train loss": [], "val loss": []}
     for epoch in range(config.num_epochs):
         start = time.time()
         train_ds = train_tfds.as_numpy_iterator()
-        # run over training steps
 
+        # Loop over training steps.
         current_epoch_train_loss = 0
         for _ in range(config.steps_per_epoch_train):
             batch = next(train_ds)
@@ -111,7 +112,7 @@ def train_and_evaluate_UNet(
                 maxval=config.timesteps,
             )
 
-            # Generating the noise and noisy image for this batch
+            # Generating the noise and noisy image for this batch.
             rng, key = random.split(rng)
             noisy_images, noise = forward_noising(key, batch[1], timestamps)
             state, batch_train_loss = train_step_UNet(
@@ -124,7 +125,7 @@ def train_and_evaluate_UNet(
             )
             metrics["train loss"].append(current_epoch_train_loss)
 
-        # run over validation steps
+        # Loop over validation steps.
         metrics["val loss"].append(0.0)
         for _ in range(config.steps_per_epoch_val):
             val_ds = val_tfds.as_numpy_iterator()
@@ -145,16 +146,14 @@ def train_and_evaluate_UNet(
                 (noisy_images, batch[1]),
                 timestamps=timestamps,
             )
+
+            # Eval step.
             metrics["val loss"][epoch] = compute_av(
                 metrics["val loss"][epoch],
                 batch_metrics["loss"],
                 config.steps_per_epoch_val,
             )
-        # vae_utils.save_image(
-        #     comparison, f'results/reconstruction_{epoch}.png', nrow=8
-        # )
-        # vae_utils.save_image(sample, f'results/sample_{epoch}.png', nrow=8)
-        # logging.info('Previous minimum validation loss; {:.5f}'.format(min_val_loss))
+
         logging.info(
             "\n\neval epoch: {}, train loss: {:.4f}, val loss: {:.4f}".format(
                 epoch + 1,

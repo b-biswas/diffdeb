@@ -64,17 +64,17 @@ def train_and_evaluate_LDM(
 ):
     """Train and evaulate pipeline."""
 
-    # STEP 1: Train VAE
+    # STEP 1: Train VAE / Load trained weights.
     vae_params = load_model_weights(config.vae_config)
 
-    # STEP 2: Train DM
+    # STEP 2: Train DM.
     @jax.jit
     def compute_av(cumulative, current, num_of_steps):
         return cumulative + current / num_of_steps
 
     rng = random.key(0)
 
-    # Define checkpoint
+    # Define checkpoint to save the trained model.
     if os.path.exists(config.diffusion_config.model_path):
         shutil.rmtree(config.diffusion_config.model_path)
 
@@ -84,26 +84,27 @@ def train_and_evaluate_LDM(
         config.diffusion_config.model_path, orbax_checkpointer, options
     )
 
+    # Initialize the UNet in Encoder latent space.
     logging.info("Initializing model.")
 
     rng, key = random.split(rng)
     latent_images = get_latent_images(
         params=vae_params["encoder"],
-        batch=jnp.ones((2, 45, 45, 6), jnp.float32),
+        batch=jnp.ones((1, 45, 45, 6), jnp.float32),
         z_rng=key,
         latent_dim=config.vae_config.latent_dim,
         encoder_filters=config.vae_config.encoder_filters,
         encoder_kernels=config.vae_config.encoder_kernels,
         dense_layer_units=config.vae_config.dense_layer_units,
     )
-    print(latent_images.shape)
     init_data = (
         latent_images,
-        jnp.ones((2), jnp.float32),
+        jnp.ones((1), jnp.float32),
     )
     rng, key = random.split(rng)
     params_UNet = UNet().init(key, init_data)["params"]
 
+    # Create train state.
     state = train_state.TrainState.create(
         apply_fn=UNet().apply,
         params=params_UNet,
@@ -120,16 +121,16 @@ def train_and_evaluate_LDM(
         ),
     )
 
-    min_val_loss = np.inf
-
+    # Training epochs.
     logging.info("start training...")
-
+    min_val_loss = np.inf
     metrics = {"train loss": [], "val loss": []}
+
     for epoch in range(config.diffusion_config.num_epochs):
         start = time.time()
         train_ds = train_tfds.as_numpy_iterator()
-        # run over training steps
 
+        # Loop over training steps.
         current_epoch_train_loss = 0
         for _ in range(config.diffusion_config.steps_per_epoch_train):
             batch = next(train_ds)
@@ -141,7 +142,7 @@ def train_and_evaluate_LDM(
                 maxval=config.diffusion_config.timesteps,
             )
 
-            # Generating the noise and noisy image for this batch
+            # Generating the noise and noisy image for this batch.
             rng, key = random.split(rng)
             latent_batch = get_latent_images(
                 params=vae_params["encoder"],
@@ -153,9 +154,13 @@ def train_and_evaluate_LDM(
                 dense_layer_units=config.vae_config.dense_layer_units,
             )
             noisy_images, noise = forward_noising(key, latent_batch, timestamps)
+
+            # Train step.
             state, batch_train_loss = train_step_UNet(
                 state, (noisy_images, latent_batch), timestamps
             )
+
+            # Compute average loss in this epoch.
             current_epoch_train_loss = compute_av(
                 current_epoch_train_loss,
                 batch_train_loss,
@@ -163,7 +168,7 @@ def train_and_evaluate_LDM(
             )
             metrics["train loss"].append(current_epoch_train_loss)
 
-        # run over validation steps
+        # Loop over validation steps.
         metrics["val loss"].append(0.0)
         for _ in range(config.diffusion_config.steps_per_epoch_val):
             val_ds = val_tfds.as_numpy_iterator()
@@ -176,7 +181,7 @@ def train_and_evaluate_LDM(
                 maxval=config.diffusion_config.timesteps,
             )
 
-            # Generating the noise and noisy image for this batch
+            # Generating the noise and noisy image for this batch.
             rng, key = random.split(rng)
             latent_batch = get_latent_images(
                 params=vae_params["encoder"],
@@ -188,21 +193,21 @@ def train_and_evaluate_LDM(
                 dense_layer_units=config.vae_config.dense_layer_units,
             )
             noisy_images, noise = forward_noising(key, latent_batch, timestamps)
+
+            # Eval step.
             batch_metrics = eval_f_UNet(
                 state.params,
                 (noisy_images, latent_batch),
                 timestamps=timestamps,
             )
+
+            # Compute average val loss in this epoch.
             metrics["val loss"][epoch] = compute_av(
                 metrics["val loss"][epoch],
                 batch_metrics["loss"],
                 config.diffusion_config.steps_per_epoch_val,
             )
-        # vae_utils.save_image(
-        #     comparison, f'results/reconstruction_{epoch}.png', nrow=8
-        # )
-        # vae_utils.save_image(sample, f'results/sample_{epoch}.png', nrow=8)
-        # logging.info('Previous minimum validation loss; {:.5f}'.format(min_val_loss))
+
         logging.info(
             "\n\neval epoch: {}, train loss: {:.4f}, val loss: {:.4f}".format(
                 epoch + 1,
