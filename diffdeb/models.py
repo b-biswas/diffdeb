@@ -51,7 +51,7 @@ class Encoder(nn.Module):
             kernel_size=(3, 3),
             padding="SAME",
         )(x)
-      logvar_x = - nn.activation.relu(logvar_x)
+      logvar_x = - nn.relu(logvar_x)
       
     return mean_x, logvar_x
 
@@ -268,7 +268,7 @@ class ResnetBlock(nn.Module):
   
 class UNet(nn.Module):
   dim: int = 8 # controls the number of channels in the UNet layers
-  dim_scale_factor: tuple = (1, 2, 4)
+  dim_scale_factor: tuple = (1, 2)
   num_groups: int = 8
 
   @nn.compact
@@ -285,7 +285,7 @@ class UNet(nn.Module):
       inputs = jnp.pad(
         inputs,
         pad_width=(
-          (0,0), 
+          (0, 0),
           (0, padding_to_add),
           (0, padding_to_add),
           (0,0),
