@@ -1,1 +1,1 @@
-Latent diffusion model based debelnder 
+Latent diffusion model based deblender.
