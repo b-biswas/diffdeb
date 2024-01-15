@@ -13,12 +13,33 @@ import orbax
 from flax.training import orbax_utils, train_state
 from jax import random
 
-from diffdeb.diffusion import forward_noising
+from diffdeb.diffusion import forward_SED_noising
 from diffdeb.load_weights import load_model_weights
 from diffdeb.models import Encoder, UNet, reparameterize
-from diffdeb.train_UNet import eval_f_UNet, train_step_UNet
 
 logging.basicConfig(level=logging.INFO)
+
+
+@jax.jit
+def score_loss_fn(params, batch, timestamps, std):
+    score = UNet().apply({"params": params}, (batch[0], timestamps))
+    std = std.reshape(-1, 1, 1, 1)
+    loss = ((std * score - (batch[1] - batch[0]) / std) ** 2).mean()
+    return loss
+
+
+@jax.jit
+def train_step_UNetScore(state, batch, timestamps, std):
+    loss, grads = jax.value_and_grad(score_loss_fn, argnums=0)(
+        state.params, batch, timestamps, std
+    )
+    return state.apply_gradients(grads=grads), loss
+
+
+@jax.jit
+def eval_f_UNetScore(params, images, timestamps, std):
+    loss = score_loss_fn(params, images, timestamps, std)
+    return {"loss": loss}
 
 
 @partial(
@@ -135,11 +156,11 @@ def train_and_evaluate_LDM(
         for _ in range(config.diffusion_config.steps_per_epoch_train):
             batch = next(train_ds)
             rng, key = random.split(rng)
-            timestamps = random.randint(
+            timestamps = random.uniform(
                 key,
                 shape=(batch[0].shape[0],),
-                minval=0,
-                maxval=config.diffusion_config.timesteps,
+                minval=0.0001,
+                maxval=config.diffusion_config.t_max_val,
             )
 
             # Generating the noise and noisy image for this batch.
@@ -154,11 +175,14 @@ def train_and_evaluate_LDM(
                 dense_layer_units=config.vae_config.dense_layer_units,
             )
             rng, key = random.split(rng)
-            noisy_images, noise = forward_noising(key, latent_batch, timestamps)
+
+            noisy_images, noise, std = forward_SED_noising(
+                key, latent_batch, 25, timestamps
+            )
 
             # Train step.
-            state, batch_train_loss = train_step_UNet(
-                state, (noisy_images, latent_batch), timestamps
+            state, batch_train_loss = train_step_UNetScore(
+                state, (noisy_images, latent_batch), timestamps, std
             )
 
             # Compute average loss in this epoch.
@@ -175,11 +199,11 @@ def train_and_evaluate_LDM(
             val_ds = val_tfds.as_numpy_iterator()
             batch = next(val_ds)
             rng, key = random.split(rng)
-            timestamps = random.randint(
+            timestamps = random.uniform(
                 key,
-                shape=(latent_batch.shape[0],),
-                minval=0,
-                maxval=config.diffusion_config.timesteps,
+                shape=(batch[0].shape[0],),
+                minval=0.00001,
+                maxval=config.diffusion_config.t_max_val,
             )
 
             # Generating the noise and noisy image for this batch.
@@ -194,13 +218,16 @@ def train_and_evaluate_LDM(
                 dense_layer_units=config.vae_config.dense_layer_units,
             )
             rng, key = random.split(rng)
-            noisy_images, noise = forward_noising(key, latent_batch, timestamps)
+            noisy_images, noise, std = forward_SED_noising(
+                key, latent_batch, 25, timestamps
+            )
 
             # Eval step.
-            batch_metrics = eval_f_UNet(
+            batch_metrics = eval_f_UNetScore(
                 state.params,
                 (noisy_images, latent_batch),
                 timestamps=timestamps,
+                std=std,
             )
 
             # Compute average val loss in this epoch.
