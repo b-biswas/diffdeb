@@ -16,10 +16,10 @@ def get_config_vae():
     config.learning_rate = 1e-4
     config.kl_weight = 0.001
     config.input_shape = (45, 45, 6)  # stamp size should be an odd number
-    config.encoder_filters = (32, 64, 128)
-    config.decoder_filters = (16, 32, 64)
-    config.encoder_kernels = (5, 5, 5)
-    config.decoder_kernels = (5, 5, 5)
+    config.encoder_filters = (32, 64)
+    config.decoder_filters = (16, 32)
+    config.encoder_kernels = (5, 5)
+    config.decoder_kernels = (5, 5)
     config.dense_layer_units = 0
 
     # training config
@@ -46,10 +46,11 @@ def get_config_diffusion():
     config.linear_norm_coeff = 10000
     config.timesteps = 200
     config.num_epochs = 50
-    config.steps_per_epoch_train = 1500
-    config.steps_per_epoch_val = 500
+    config.steps_per_epoch_train = 500
+    config.steps_per_epoch_val = 200
     config.batch_size = 100
     config.learning_rate = 1e-4
+    config.t_max_val = 0.1
 
     return config
 
