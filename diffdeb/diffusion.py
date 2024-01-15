@@ -50,3 +50,43 @@ def backward_denoising_ddpm(x_t, pred_noise, t, image_shape, rng):
     z = random.normal(key=rng, shape=image_shape)
 
     return mean + (var**0.5) * z
+
+
+@jax.jit
+def marginal_prob_std(t, sigma):
+    r"""Compute the mean and standard deviation of $p_{0t}(x(t) | x(0))$.
+
+    Args:
+      t: A vector of time steps.
+      sigma: The $\sigma$ in our SDE.
+
+    Returns:
+      The standard deviation.
+    """
+    return jnp.sqrt((sigma ** (2 * t) - 1.0) / 2.0 / jnp.log(sigma))
+
+
+@jax.jit
+def diffusion_coeff(t, sigma):
+    r"""Compute the diffusion coefficient of our SDE.
+
+    Args:
+      t: A vector of time steps.
+      sigma: The $\sigma$ in our SDE.
+
+    Returns:
+      The vector of diffusion coefficients.
+    """
+    return sigma**t
+
+
+@jax.jit
+def forward_SED_noising(key, x_0, c, t):
+    normal_noise = random.normal(
+        key, x_0.shape
+    )  # This noise is probably too much for CATSIM dataset
+    std = marginal_prob_std(c, t)
+    std = std.reshape(-1, 1, 1, 1)
+    noise = std * normal_noise
+    noisy_image = x_0 + noise
+    return noisy_image, noise, std
