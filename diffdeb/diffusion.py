@@ -4,6 +4,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as random
 
+from diffdeb.models import UNet
+
 # Defining a constant value for T
 timesteps = 200
 
@@ -53,7 +55,7 @@ def backward_denoising_ddpm(x_t, pred_noise, t, image_shape, rng):
 
 
 @jax.jit
-def marginal_prob_std(t, sigma):
+def marginal_prob_std(t, exp_constant):
     r"""Compute the mean and standard deviation of $p_{0t}(x(t) | x(0))$.
 
     Args:
@@ -63,30 +65,38 @@ def marginal_prob_std(t, sigma):
     Returns:
       The standard deviation.
     """
-    return jnp.sqrt((sigma ** (2 * t) - 1.0) / 2.0 / jnp.log(sigma))
+    return jnp.sqrt((exp_constant ** (2 * t) - 1.0) / 2.0 / jnp.log(exp_constant))
 
 
 @jax.jit
-def diffusion_coeff(t, sigma):
+def diffusion_coeff(t, exp_constant):
     r"""Compute the diffusion coefficient of our SDE.
 
     Args:
       t: A vector of time steps.
-      sigma: The $\sigma$ in our SDE.
+      exp_constant: The exp_constant in the SDE.
 
     Returns:
       The vector of diffusion coefficients.
     """
-    return sigma**t
+    return exp_constant**t
 
 
 @jax.jit
-def forward_SED_noising(key, x_0, c, t):
+def forward_SED_noising(key, x_0, t, exp_constant):
     normal_noise = random.normal(
         key, x_0.shape
     )  # This noise is probably too much for CATSIM dataset
-    std = marginal_prob_std(c, t)
+    std = marginal_prob_std(
+        t=t,
+        exp_constant=exp_constant,
+    )
     std = std.reshape(-1, 1, 1, 1)
     noise = std * normal_noise
     noisy_image = x_0 + noise
     return noisy_image, noise, std
+
+
+@jax.jit
+def score_fn(params, x, t):
+    return UNet().apply({"params": params}, (x, t))

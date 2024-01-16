@@ -159,7 +159,7 @@ def train_and_evaluate_LDM(
             timestamps = random.uniform(
                 key,
                 shape=(batch[0].shape[0],),
-                minval=0.0001,
+                minval=config.min_noise_scale,
                 maxval=config.diffusion_config.t_max_val,
             )
 
@@ -177,7 +177,10 @@ def train_and_evaluate_LDM(
             rng, key = random.split(rng)
 
             noisy_images, noise, std = forward_SED_noising(
-                key, latent_batch, 25, timestamps
+                key,
+                latent_batch,
+                t=timestamps,
+                exp_constant=config.exp_constant,
             )
 
             # Train step.
@@ -219,7 +222,10 @@ def train_and_evaluate_LDM(
             )
             rng, key = random.split(rng)
             noisy_images, noise, std = forward_SED_noising(
-                key, latent_batch, 25, timestamps
+                key,
+                latent_batch,
+                t=timestamps,
+                exp_constant=config.exp_constant,
             )
 
             # Eval step.
