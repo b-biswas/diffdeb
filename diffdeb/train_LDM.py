@@ -78,6 +78,58 @@ def get_latent_images(
     return latent_images
 
 
+@partial(
+    jax.jit,
+    static_argnames=[
+        "batch_size",
+        "latent_dim",
+        "encoder_filters",
+        "encoder_kernels",
+        "dense_layer_units",
+    ],
+)
+def noisy_latent_images(
+    rng,
+    batch_size,
+    min_noise_scale,
+    t_max_val,
+    batch,
+    encoder_params,
+    latent_dim,
+    encoder_filters,
+    encoder_kernels,
+    dense_layer_units,
+    exp_constant,
+):
+    rng, key = random.split(rng)
+    timestamps = random.uniform(
+        key,
+        shape=(batch_size,),
+        minval=min_noise_scale,
+        maxval=t_max_val,
+    )
+
+    # Generating the noise and noisy image for this batch.
+    rng, key = random.split(rng)
+    latent_batch = get_latent_images(
+        params=encoder_params,
+        batch=batch,
+        z_rng=key,
+        latent_dim=latent_dim,
+        encoder_filters=encoder_filters,
+        encoder_kernels=encoder_kernels,
+        dense_layer_units=dense_layer_units,
+    )
+    rng, key = random.split(rng)
+    noisy_images, noise, std = forward_SED_noising(
+        key,
+        latent_batch,
+        t=timestamps,
+        exp_constant=exp_constant,
+    )
+    return noisy_images, latent_batch, noise, timestamps, std
+
+
 def train_and_evaluate_LDM(
     train_tfds,
     val_tfds,
@@ -156,33 +208,20 @@ def train_and_evaluate_LDM(
         for _ in range(config.diffusion_config.steps_per_epoch_train):
             batch = next(train_ds)
             rng, key = random.split(rng)
-            timestamps = random.uniform(
-                key,
-                shape=(batch[0].shape[0],),
-                minval=config.min_noise_scale,
-                maxval=config.diffusion_config.t_max_val,
-            )
 
-            # Generating the noise and noisy image for this batch.
-            rng, key = random.split(rng)
-            latent_batch = get_latent_images(
-                params=vae_params["encoder"],
+            noisy_images, latent_batch, noise, timestamps, std = noisy_latent_images(
+                rng=key,
+                batch_size=config.diffusion_config.batch_size,
+                min_noise_scale=config.min_noise_scale,
+                t_max_val=config.diffusion_config.t_max_val,
                 batch=batch[0],
-                z_rng=key,
+                encoder_params=vae_params["encoder"],
                 latent_dim=config.vae_config.latent_dim,
                 encoder_filters=config.vae_config.encoder_filters,
                 encoder_kernels=config.vae_config.encoder_kernels,
                 dense_layer_units=config.vae_config.dense_layer_units,
-            )
-            rng, key = random.split(rng)
-
-            noisy_images, noise, std = forward_SED_noising(
-                key,
-                latent_batch,
-                t=timestamps,
                 exp_constant=config.exp_constant,
             )
-
             # Train step.
             state, batch_train_loss = train_step_UNetScore(
                 state, (noisy_images, latent_batch), timestamps, std
@@ -202,29 +241,18 @@ def train_and_evaluate_LDM(
             val_ds = val_tfds.as_numpy_iterator()
             batch = next(val_ds)
             rng, key = random.split(rng)
-            timestamps = random.uniform(
-                key,
-                shape=(batch[0].shape[0],),
-                minval=0.00001,
-                maxval=config.diffusion_config.t_max_val,
-            )
 
-            # Generating the noise and noisy image for this batch.
-            rng, key = random.split(rng)
-            latent_batch = get_latent_images(
-                params=vae_params["encoder"],
+            noisy_images, latent_batch, noise, timestamps, std = noisy_latent_images(
+                rng=key,
+                batch_size=config.diffusion_config.batch_size,
+                min_noise_scale=config.min_noise_scale,
+                t_max_val=config.diffusion_config.t_max_val,
                 batch=batch[0],
-                z_rng=key,
+                encoder_params=vae_params["encoder"],
                 latent_dim=config.vae_config.latent_dim,
                 encoder_filters=config.vae_config.encoder_filters,
                 encoder_kernels=config.vae_config.encoder_kernels,
                 dense_layer_units=config.vae_config.dense_layer_units,
-            )
-            rng, key = random.split(rng)
-            noisy_images, noise, std = forward_SED_noising(
-                key,
-                latent_batch,
-                t=timestamps,
                 exp_constant=config.exp_constant,
             )
 
