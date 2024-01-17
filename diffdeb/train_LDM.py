@@ -13,12 +13,33 @@ import orbax
 from flax.training import orbax_utils, train_state
 from jax import random
 
-from diffdeb.diff_utils import forward_noising
+from diffdeb.diffusion import forward_SED_noising
 from diffdeb.load_weights import load_model_weights
 from diffdeb.models import Encoder, UNet, reparameterize
-from diffdeb.train_UNet import eval_f_UNet, train_step_UNet
 
 logging.basicConfig(level=logging.INFO)
+
+
+@jax.jit
+def score_loss_fn(params, batch, timestamps, std):
+    score = UNet().apply({"params": params}, (batch[0], timestamps))
+    std = std.reshape(-1, 1, 1, 1)
+    loss = ((std * score - (batch[1] - batch[0]) / std) ** 2).mean()
+    return loss
+
+
+@jax.jit
+def train_step_UNetScore(state, batch, timestamps, std):
+    loss, grads = jax.value_and_grad(score_loss_fn, argnums=0)(
+        state.params, batch, timestamps, std
+    )
+    return state.apply_gradients(grads=grads), loss
+
+
+@jax.jit
+def eval_f_UNetScore(params, images, timestamps, std):
+    loss = score_loss_fn(params, images, timestamps, std)
+    return {"loss": loss}
 
 
 @partial(
@@ -55,6 +76,58 @@ def get_latent_images(
     )
 
     return latent_images
+
+
+@partial(
+    jax.jit,
+    static_argnames=[
+        "batch_size",
+        "latent_dim",
+        "encoder_filters",
+        "encoder_kernels",
+        "dense_layer_units",
+    ],
+)
+def noisy_latent_images(
+    rng,
+    batch_size,
+    min_noise_scale,
+    t_max_val,
+    batch,
+    encoder_params,
+    latent_dim,
+    encoder_filters,
+    encoder_kernels,
+    dense_layer_units,
+    exp_constant,
+):
+    rng, key = random.split(rng)
+    timestamps = random.uniform(
+        key,
+        shape=(batch_size,),
+        minval=min_noise_scale,
+        maxval=t_max_val,
+    )
+
+    # Generating the noise and noisy image for this batch.
+    rng, key = random.split(rng)
+    latent_batch = get_latent_images(
+        params=encoder_params,
+        batch=batch,
+        z_rng=key,
+        latent_dim=latent_dim,
+        encoder_filters=encoder_filters,
+        encoder_kernels=encoder_kernels,
+        dense_layer_units=dense_layer_units,
+    )
+    rng, key = random.split(rng)
+    noisy_images, noise, std = forward_SED_noising(
+        key,
+        latent_batch,
+        t=timestamps,
+        exp_constant=exp_constant,
+    )
+    return noisy_images, latent_batch, noise, timestamps, std
 
 
 def train_and_evaluate_LDM(
@@ -135,29 +208,23 @@ def train_and_evaluate_LDM(
         for _ in range(config.diffusion_config.steps_per_epoch_train):
             batch = next(train_ds)
             rng, key = random.split(rng)
-            timestamps = random.randint(
-                key,
-                shape=(batch[0].shape[0],),
-                minval=0,
-                maxval=config.diffusion_config.timesteps,
-            )
 
-            # Generating the noise and noisy image for this batch.
-            rng, key = random.split(rng)
-            latent_batch = get_latent_images(
-                params=vae_params["encoder"],
+            noisy_images, latent_batch, noise, timestamps, std = noisy_latent_images(
+                rng=key,
+                batch_size=config.diffusion_config.batch_size,
+                min_noise_scale=config.min_noise_scale,
+                t_max_val=config.diffusion_config.t_max_val,
                 batch=batch[0],
-                z_rng=key,
+                encoder_params=vae_params["encoder"],
                 latent_dim=config.vae_config.latent_dim,
                 encoder_filters=config.vae_config.encoder_filters,
                 encoder_kernels=config.vae_config.encoder_kernels,
                 dense_layer_units=config.vae_config.dense_layer_units,
+                exp_constant=config.exp_constant,
             )
-            noisy_images, noise = forward_noising(key, latent_batch, timestamps)
-
             # Train step.
-            state, batch_train_loss = train_step_UNet(
-                state, (noisy_images, latent_batch), timestamps
+            state, batch_train_loss = train_step_UNetScore(
+                state, (noisy_images, latent_batch), timestamps, std
             )
 
             # Compute average loss in this epoch.
@@ -166,7 +233,7 @@ def train_and_evaluate_LDM(
                 batch_train_loss,
                 config.diffusion_config.steps_per_epoch_train,
             )
-            metrics["train loss"].append(current_epoch_train_loss)
+        metrics["train loss"].append(current_epoch_train_loss)
 
         # Loop over validation steps.
         metrics["val loss"].append(0.0)
@@ -174,31 +241,27 @@ def train_and_evaluate_LDM(
             val_ds = val_tfds.as_numpy_iterator()
             batch = next(val_ds)
             rng, key = random.split(rng)
-            timestamps = random.randint(
-                key,
-                shape=(latent_batch.shape[0],),
-                minval=0,
-                maxval=config.diffusion_config.timesteps,
-            )
 
-            # Generating the noise and noisy image for this batch.
-            rng, key = random.split(rng)
-            latent_batch = get_latent_images(
-                params=vae_params["encoder"],
+            noisy_images, latent_batch, noise, timestamps, std = noisy_latent_images(
+                rng=key,
+                batch_size=config.diffusion_config.batch_size,
+                min_noise_scale=config.min_noise_scale,
+                t_max_val=config.diffusion_config.t_max_val,
                 batch=batch[0],
-                z_rng=key,
+                encoder_params=vae_params["encoder"],
                 latent_dim=config.vae_config.latent_dim,
                 encoder_filters=config.vae_config.encoder_filters,
                 encoder_kernels=config.vae_config.encoder_kernels,
                 dense_layer_units=config.vae_config.dense_layer_units,
+                exp_constant=config.exp_constant,
             )
-            noisy_images, noise = forward_noising(key, latent_batch, timestamps)
 
             # Eval step.
-            batch_metrics = eval_f_UNet(
+            batch_metrics = eval_f_UNetScore(
                 state.params,
                 (noisy_images, latent_batch),
                 timestamps=timestamps,
+                std=std,
             )
 
             # Compute average val loss in this epoch.

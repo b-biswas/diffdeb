@@ -13,7 +13,7 @@ import orbax
 from flax.training import orbax_utils, train_state
 from jax import random
 
-from diffdeb.diff_utils import forward_noising
+from diffdeb.diffusion import forward_noising
 from diffdeb.losses import mse_loss_fn
 from diffdeb.models import UNet
 
