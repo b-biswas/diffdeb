@@ -1,3 +1,5 @@
+from functools import partial
+
 import jax
 import jax.numpy as jnp
 from tqdm import tqdm
@@ -5,6 +7,7 @@ from tqdm import tqdm
 from diffdeb.diffusion import score_fn
 
 
+@partial(jax.jit, static_argnames=["time_shape"])
 def SED_step(step_rng, params, x, g, time_shape, time_step, step_size):
     batch_time_step = jnp.ones(time_shape) * time_step
     mean_x = x + (g**2) * score_fn(params, x, batch_time_step) * step_size
@@ -51,7 +54,7 @@ def Euler_Maruyama_sampler(
     step_size = time_steps[0] - time_steps[1]
     x = initial_rep
     for time_step in tqdm(time_steps):
-        g = diffusion_coeff(time_step, exp_constant)
+        g = diffusion_coeff(t=time_step, exp_constant=exp_constant)
         rng, step_rng = jax.random.split(rng)
         x, mean_x = SED_step(
             step_rng=step_rng,
