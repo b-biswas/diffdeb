@@ -50,7 +50,6 @@ def get_config_diffusion():
     config.steps_per_epoch_val = 200
     config.batch_size = 100
     config.learning_rate = 1e-4
-    config.t_max_val = 0.1
 
     return config
 
@@ -61,7 +60,8 @@ def get_config_LDM():
     config.vae_config = get_config_vae()
     config.diffusion_config = get_config_diffusion()
     config.exp_constant = 25
-    config.min_noise_scale = 1e-8
+    config.t_min_val = 1e-3
+    config.t_max_val = 0.5
 
     if config.diffusion_config.linear_norm_coeff != config.vae_config.linear_norm_coeff:
         raise ValueError("Linear norm should be the same for both Encoder and UNet")

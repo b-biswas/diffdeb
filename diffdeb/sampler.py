@@ -22,6 +22,7 @@ def Euler_Maruyama_sampler(
     params,
     marginal_prob_std,
     diffusion_coeff,
+    start_time,
     initial_rep,
     batch_size,
     num_steps,
@@ -50,7 +51,7 @@ def Euler_Maruyama_sampler(
     time_shape = batch_size // jax.local_device_count()
     # sample_shape = (batch_size, 12, 12, 1)
     # init_x = jax.random.normal(step_rng, sample_shape) * marginal_prob_std(t=.1, exp_constant=exp_constant)
-    time_steps = jnp.linspace(0.1, eps, num_steps)
+    time_steps = jnp.linspace(start_time, eps, num_steps)
     step_size = time_steps[0] - time_steps[1]
     x = initial_rep
     for time_step in tqdm(time_steps):

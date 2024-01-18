@@ -24,7 +24,9 @@ logging.basicConfig(level=logging.INFO)
 def score_loss_fn(params, batch, timestamps, std):
     score = UNet().apply({"params": params}, (batch[0], timestamps))
     std = std.reshape(-1, 1, 1, 1)
-    loss = ((std * score - (batch[1] - batch[0]) / std) ** 2).mean()
+    loss = (
+        (std * score - (batch[1] - batch[0]) / std) ** 2
+    ).mean()  # TODO: use noise over here directly
     return loss
 
 
@@ -91,7 +93,7 @@ def get_latent_images(
 def noisy_latent_images(
     rng,
     batch_size,
-    min_noise_scale,
+    t_min_val,
     t_max_val,
     batch,
     encoder_params,
@@ -105,7 +107,7 @@ def noisy_latent_images(
     timestamps = random.uniform(
         key,
         shape=(batch_size,),
-        minval=min_noise_scale,
+        minval=t_min_val,
         maxval=t_max_val,
     )
 
@@ -212,8 +214,8 @@ def train_and_evaluate_LDM(
             noisy_images, latent_batch, noise, timestamps, std = noisy_latent_images(
                 rng=key,
                 batch_size=config.diffusion_config.batch_size,
-                min_noise_scale=config.min_noise_scale,
-                t_max_val=config.diffusion_config.t_max_val,
+                t_min_val=config.t_min_val,
+                t_max_val=config.t_max_val,
                 batch=batch[0],
                 encoder_params=vae_params["encoder"],
                 latent_dim=config.vae_config.latent_dim,
@@ -245,8 +247,8 @@ def train_and_evaluate_LDM(
             noisy_images, latent_batch, noise, timestamps, std = noisy_latent_images(
                 rng=key,
                 batch_size=config.diffusion_config.batch_size,
-                min_noise_scale=config.min_noise_scale,
-                t_max_val=config.diffusion_config.t_max_val,
+                t_min_val=config.t_min_val,
+                t_max_val=config.t_max_val,
                 batch=batch[0],
                 encoder_params=vae_params["encoder"],
                 latent_dim=config.vae_config.latent_dim,
