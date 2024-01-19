@@ -340,6 +340,63 @@ class UNet(nn.Module):
         x = x[:, 0:original_stamp_size, 0:original_stamp_size, :]
         return x
 
+from typing import Any, Callable, Sequence, Tuple, Dict
+
+class DoubleConvBlock(nn.Module):
+    input_channels: int = 128
+    kernel_size: Tuple[int, int] = (3 ,3)
+
+    @nn.compact
+    def __call__(self, x):
+        x = nn.Conv(features=self.input_channels, kernel_size=self.kernel_size , padding='SAME')(x)
+        x = nn.relu(x)
+        x = nn.Conv(features=self.input_channels, kernel_size=self.kernel_size , padding='SAME')(x)
+        x = nn.relu(x)
+        #print(x.shape)
+        return x
+
+class DownBlock(nn.Module):
+    input_channels: int = 128
+
+    @nn.compact
+    def __call__(self, x):
+        conv = DoubleConvBlock(self.input_channels)(x)
+        x = nn.max_pool(conv, window_shape=(2,2), strides=(2,2), padding='SAME')
+        return x , conv
+
+class ExpansiveBlock(nn.Module):
+    input_channels: int = 128
+
+    @nn.compact
+    def __call__(self, x , skip_connection):
+        x = jax.image.resize(image=x, shape=(x.shape[0] , skip_connection.shape[1] , skip_connection.shape[2] , x.shape[3] ), method="nearest")
+        x = jnp.concatenate([x ,skip_connection],axis=-1)
+        x = DoubleConvBlock(self.input_channels)(x)
+        return x
+
+
+class UNET2(nn.Module):
+    input_channels: Sequence[int]
+    bottle_neck_conv: int = 512
+    output_channel: int=1
+    @nn.compact
+    def __call__(self, x):
+
+        skip_outputs = []
+        for conv_layer in self.input_channels:
+            x , conv = DownBlock(conv_layer)(x)
+            skip_outputs.append((conv_layer , conv))
+
+        #x = nn.Conv(self.bottle_neck_conv, kernel_size=(3, 3))(x)
+        #x = nn.relu(x)
+        #x = jax.image.resize(x, (x.shape[0] * 2, x.shape[1] * 2, x.shape[2]) , method="nearest")
+
+        for i , (unconv_layer , skip_output)  in enumerate(reversed(skip_outputs)):
+            x = ExpansiveBlock(unconv_layer)(x,skip_output)
+
+        x = nn.Conv(self.output_channel, kernel_size=(3, 3), padding='SAME')(x)
+        return x
+
 
 def create_UNet_model():
     return UNet()
