@@ -11,9 +11,6 @@ from diffdeb.models import UNet
 
 config = get_config_diffusion()
 
-# Defining a constant value for T
-# timesteps = 200 # TODO: use config!!
-
 
 def compute_betas(timesteps, s=0.00008):
     def f(t):
