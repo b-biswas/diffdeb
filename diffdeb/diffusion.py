@@ -5,9 +5,6 @@ import jax.numpy as jnp
 import jax.random as random
 
 from diffdeb.config import get_config_diffusion
-from diffdeb.models import UNet
-
-# from diffdeb.models import Decoder, UNet
 
 config = get_config_diffusion()
 
@@ -111,6 +108,52 @@ def forward_SED_noising(key, x_0, t, exp_constant):
     return noisy_image, noise, std
 
 
-@jax.jit
-def score_fn(params, x, t):
-    return UNet().apply({"params": params}, (x, t))
+# @partial(
+#     jax.jit,
+#     static_argnames=["input_shape", "use_likelihood", "latent_dim", "decoder_filters", "decoder_kernels", "dense_layer_units"],
+# )
+# def score_fn(params, x, t,
+#     use_likelihood=False,
+#     y=0,
+#     decoder_params=0,
+#     input_shape=0,
+#     latent_dim=0,
+#     decoder_filters=0,
+#     decoder_kernels=0,
+#     dense_layer_units=0,
+#     ):
+#     score = UNet().apply({"params": params}, (x, t))
+#     if use_likelihood:
+#         def gauss_likelihood_fn(x):
+#             gal_img = Decoder(
+#                 latent_dim=latent_dim,
+#                 input_shape=input_shape,
+#                 filters=decoder_filters,
+#                 kernels=decoder_kernels,
+#                 dense_layer_units=dense_layer_units,
+#             ).apply({"params":decoder_params}, x)
+#             mse = (y - gal_img)**2
+#             #var = sigma**2
+#             #gauss_likelihood = mse/(2*var)
+#             gauss_likelihood = mse
+#             return gauss_likelihood
+#         score = jax.grad(gauss_likelihood_fn)(x) + score
+#     return  score
+
+
+# def backward_denoising_ddim(x_t, pred_noise, t, sigma_t):
+#   alpha_bar_t = jnp.take(alpha_bar, t)
+#   alpha_t_minus_one = jnp.take(alpha, t - 1)
+
+#   # predicted x_0
+#   pred = (x_t - ((1 - alpha_bar_t) ** 0.5) * pred_noise)/ (alpha_bar_t ** 0.5)
+#   pred = (alpha_t_minus_one ** 0.5) * pred
+
+#   # direction pointing to x_t
+#   pred = pred + ((1 - alpha_t_minus_one - (sigma_t ** 2)) ** 0.5) * pred_noise
+
+#   # random noise
+#   eps_t = random.normal(key=random.PRNGKey(r.randint(1, 100)), shape=x_t.shape)
+#   pred = pred + (sigma_t * eps_t)
+
+#   return pred
