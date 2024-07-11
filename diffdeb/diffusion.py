@@ -1,16 +1,32 @@
-from functools import partial
+import random as r
 
 import jax
 import jax.numpy as jnp
 import jax.random as random
 
+from diffdeb.config import get_config_diffusion
 from diffdeb.models import UNet
 
+# from diffdeb.models import Decoder, UNet
+
+config = get_config_diffusion()
+
 # Defining a constant value for T
-timesteps = 200
+# timesteps = 200 # TODO: use config!!
+
+
+def compute_betas(timesteps, s=0.00008):
+    def f(t):
+        return jnp.cos((t / timesteps + s) / (1 + s) * 0.5 * jnp.pi) ** 2
+
+    x = jnp.linspace(0, timesteps, timesteps + 1)
+    alpha_bar = f(x) / f(jnp.asarray([0]))
+    betas = 1 - alpha_bar[1:] / alpha_bar[:-1]
+    return jnp.clip(betas, 0.0001, 0.05)
+
 
 # Defining beta for all t's in T steps
-beta = jnp.linspace(0.0001, 0.02, timesteps)
+beta = compute_betas(timesteps=config.timesteps)
 
 # Defining alpha and its derivatives according to reparameterization trick
 alpha = 1 - beta
@@ -23,13 +39,13 @@ one_minus_sqrt_alpha_bar = jnp.sqrt(1 - alpha_bar)
 # Implement noising logic according to reparameterization trick
 @jax.jit
 def forward_noising(key, x_0, t):
-    noise = random.normal(
-        key, x_0.shape
-    )  # This noise is probably too much for CATSIM dataset
+    noise = random.normal(key, x_0.shape)
+
     reshaped_sqrt_alpha_bar_t = jnp.reshape(jnp.take(sqrt_alpha_bar, t), (-1, 1, 1, 1))
     reshaped_one_minus_sqrt_alpha_bar_t = jnp.reshape(
         jnp.take(one_minus_sqrt_alpha_bar, t), (-1, 1, 1, 1)
     )
+
     noisy_image = (
         reshaped_sqrt_alpha_bar_t * x_0 + reshaped_one_minus_sqrt_alpha_bar_t * noise
     )
@@ -37,11 +53,12 @@ def forward_noising(key, x_0, t):
 
 
 # This function defines the logic of getting x_t-1 given x_t
-@partial(
-    jax.jit,
-    static_argnames=["image_shape"],
-)
-def backward_denoising_ddpm(x_t, pred_noise, t, image_shape, rng):
+# @partial(
+#     jax.jit,
+#     static_argnames=["image_shape"],
+# )
+@jax.jit
+def backward_denoising_ddpm(x_t, pred_noise, t):
     alpha_t = jnp.take(alpha, t)
     alpha_t_bar = jnp.take(alpha_bar, t)
 
@@ -49,7 +66,7 @@ def backward_denoising_ddpm(x_t, pred_noise, t, image_shape, rng):
     mean = 1 / (alpha_t**0.5) * (x_t - eps_coef * pred_noise)
 
     var = jnp.take(beta, t)
-    z = random.normal(key=rng, shape=image_shape)
+    z = random.normal(key=random.PRNGKey(r.randint(1, 1000)), shape=x_t.shape)
 
     return mean + (var**0.5) * z
 
