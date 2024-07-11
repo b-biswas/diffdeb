@@ -29,6 +29,14 @@ class Encoder(nn.Module):
                 features=self.filters[i],
                 kernel_size=(self.kernels[i], self.kernels[i]),
                 padding="SAME",
+                strides=(1, 1),
+            )(x)
+            x = nn.activation.PReLU()(x)
+
+            x = nn.Conv(
+                features=self.filters[i],
+                kernel_size=(self.kernels[i], self.kernels[i]),
+                padding="SAME",
                 strides=(2, 2),
             )(x)
             x = nn.activation.PReLU()(x)
@@ -41,16 +49,30 @@ class Encoder(nn.Module):
             mean_x = nn.Dense(features=self.latent_dim, name="latent_mean")(x)
             logvar_x = nn.Dense(features=self.latent_dim, name="latent_logvar")(x)
         else:
+            mean_x1 = nn.Conv(
+                features=16,
+                kernel_size=(5, 5),
+                padding="SAME",
+            )(x)
+            mean_x1 = nn.activation.PReLU()(mean_x1)
             mean_x = nn.Conv(
-                features=1,
-                kernel_size=(3, 3),
+                features=2,
+                kernel_size=(5, 5),
+                padding="SAME",
+            )(mean_x1)
+            mean_x = nn.activation.tanh(mean_x)
+
+            logvar_x1 = nn.Conv(
+                features=16,
+                kernel_size=(5, 5),
                 padding="SAME",
             )(x)
+            logvar_x1 = nn.activation.PReLU()(logvar_x1)
             logvar_x = nn.Conv(
-                features=1,
-                kernel_size=(3, 3),
+                features=2,
+                kernel_size=(5, 5),
                 padding="SAME",
-            )(x)
+            )(logvar_x1)
             logvar_x = -nn.relu(logvar_x)
 
         return mean_x, logvar_x
@@ -104,7 +126,7 @@ class Decoder(nn.Module):
 
         # keep the output of the last layer as relu as we want only positive flux values.
         z = nn.ConvTranspose(self.input_shape[-1], (3, 3), padding="SAME")(z)
-        z = nn.activation.relu(z)
+        z = nn.relu(z)
 
         # In case the last convolutional layer does not provide an image of the size of the input image, cropp it.
         cropping = z.shape[1] - self.input_shape[0]
@@ -306,8 +328,8 @@ class UNet(nn.Module):
         # Downsampling phase
         for index, dim in enumerate(dims):
             x = ResnetBlock(dim, self.num_groups)(x, time_emb)
-            # x = ResnetBlock(dim, self.num_groups)(x, time_emb)
-            # x = Attention(dim)(x)
+            x = ResnetBlock(dim, self.num_groups)(x, time_emb)
+            x = Attention(dim)(x)
             norm = nn.GroupNorm(self.num_groups)(x)
             x = norm + x
             # Saving this output for residual connection with the upsampling layer
@@ -317,8 +339,8 @@ class UNet(nn.Module):
 
         # Middle block
         x = ResnetBlock(dims[-1], self.num_groups)(x, time_emb)
-        att = Attention(dim)(x)
-        norm = nn.GroupNorm(self.num_groups)(att)
+        x = Attention(dim)(x)
+        norm = nn.GroupNorm(self.num_groups)(x)
         x = norm + x
         x = ResnetBlock(dims[-1], self.num_groups)(x, time_emb)
 
@@ -326,8 +348,8 @@ class UNet(nn.Module):
         for index, dim in enumerate(reversed(dims)):
             x = jnp.concatenate([pre_downsampling.pop(), x], -1)
             x = ResnetBlock(dim, self.num_groups)(x, time_emb)
-            # x = ResnetBlock(dim, self.num_groups)(x, time_emb)
-            # x = Attention(dim)(x)
+            x = ResnetBlock(dim, self.num_groups)(x, time_emb)
+            x = Attention(dim)(x)
             norm = nn.GroupNorm(self.num_groups)(x)
             x = norm + x
             if index != len(dims) - 1:
@@ -336,7 +358,6 @@ class UNet(nn.Module):
         # Final ResNet block and output convolutional layer
         x = ResnetBlock(dim, self.num_groups)(x, time_emb)
         x = nn.Conv(channels, (1, 1), padding="SAME")(x)
-
         x = x[:, 0:original_stamp_size, 0:original_stamp_size, :]
         return x
 
