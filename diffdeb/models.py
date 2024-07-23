@@ -87,18 +87,8 @@ class Decoder(nn.Module):
     kernels: Sequence[int]
     dense_layer_units: int
 
-    # def __init__(self, latent_dim, filters, kernels, dense_layer_units, input_shape):
-    #    self.latent_dim = latent_dim
-    #    self.filters = filters
-    #    self.kernels = kernels
-    #    self.dense_layer_units = dense_layer_units
-    #    self.input_shape = input_shape
-
     @nn.compact
     def __call__(self, z):
-        # z = nn.Dense(500, name='fc1')(z)
-        # z = nn.relu(z)
-        # z = nn.Dense(784, name='fc2')(z)
 
         if self.dense_layer_units != 0:
             z = nn.Dense(features=self.dense_layer_units)(z)
