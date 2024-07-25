@@ -26,17 +26,17 @@ def get_config_vae():
     # Architecture config
     config.latent_dim = 16
     config.learning_rate = 1e-4
-    config.kl_weight = 1
+    config.kl_weight = 0.01
     config.input_shape = (
         45,
         45,
         len(survey.available_filters),
     )  # stamp size should be an odd number
-    config.encoder_filters = (64, 128)
-    config.decoder_filters = (64, 128)
-    config.encoder_kernels = (5, 5)
-    config.decoder_kernels = (5, 5)
-    config.dense_layer_units = 0
+    config.encoder_filters = (32, 128, 256, 512)
+    config.decoder_filters = (64, 96, 128)
+    config.encoder_kernels = (5, 5, 5, 5)
+    config.decoder_kernels = (5, 5, 5)
+    config.dense_layer_units = 512
     config.noise_sigma = jnp.asarray(noise_sigma) / config.linear_norm_coeff
 
     # training config
@@ -62,7 +62,7 @@ def get_config_diffusion():
 
     # training config
     config.linear_norm_coeff = 10000
-    config.timesteps = 200
+    config.timesteps = 500
     config.num_epochs = 200
     config.steps_per_epoch_train = 1500
     config.steps_per_epoch_val = 500
