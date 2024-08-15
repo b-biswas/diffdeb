@@ -48,6 +48,7 @@ class Encoder(nn.Module):
 
             mean_x = nn.Dense(features=self.latent_dim, name="latent_mean")(x)
             logvar_x = nn.Dense(features=self.latent_dim, name="latent_logvar")(x)
+            logvar_x = -nn.relu(logvar_x)
         else:
             mean_x1 = nn.Conv(
                 features=16,
@@ -259,36 +260,33 @@ class Attention(nn.Module):
 
 class Block(nn.Module):
     dim: int = 32
-    groups: int = 8
 
     @nn.compact
     def __call__(self, inputs):
-        conv = nn.Conv(self.dim, (3, 3))(inputs)
-        norm = nn.GroupNorm(num_groups=self.groups)(conv)
-        activation = nn.silu(norm)
-        return activation
+        x = nn.Conv(self.dim, [int(3)])(inputs)
+        x = nn.activation.PReLU()(x)
+        return x
 
 
 class ResnetBlock(nn.Module):
     dim: int = 32
-    groups: int = 8
 
     @nn.compact
     def __call__(self, inputs, time_embed=None):
-        x = Block(self.dim, self.groups)(inputs)
+        x = Block(self.dim)(inputs)
         if time_embed is not None:
-            time_embed = nn.silu(time_embed)
+            # time_embed = nn.silu(time_embed)
             time_embed = nn.Dense(self.dim)(time_embed)
-            x = jnp.expand_dims(jnp.expand_dims(time_embed, 1), 1) + x
-        x = Block(self.dim, self.groups)(x)
-        res_conv = nn.Conv(self.dim, (1, 1), padding="SAME")(inputs)
-        return x + res_conv
+            time_embed = nn.activation.PReLU()(time_embed)
+            x = jnp.expand_dims(time_embed, 1) + x
+        x = Block(self.dim)(x)
+        # res_conv = nn.Conv(self.dim, [int(3)], padding="SAME")(inputs)
+        return x + inputs
 
 
 class UNet(nn.Module):
-    dim: int = 8  # controls the number of channels in the UNet layers
-    dim_scale_factor: tuple = (1, 2)
-    num_groups: int = 8
+    dim: int = 32  # controls the number of channels in the UNet layers
+    num_down_sampling: int = 2
 
     @nn.compact
     def __call__(self, inputs):
@@ -297,58 +295,48 @@ class UNet(nn.Module):
 
         # pad inputs so that stamp size is divisible by 2^num of conv stride 2 layers
         # otherwise dimentions won't match while concatenating the UNet layers
-        original_stamp_size = inputs.shape[1]
-        factor_of_reduction = 2 ** len(self.dim_scale_factor)
-        padding_to_add = factor_of_reduction - inputs.shape[1] % factor_of_reduction
-        if padding_to_add != 0:
-            inputs = jnp.pad(
-                inputs,
-                pad_width=(
-                    (0, 0),
-                    (0, padding_to_add),
-                    (0, padding_to_add),
-                    (0, 0),
-                ),
-            )
-        x = nn.Conv(self.dim // 3 * 2, (5, 5), padding="SAME")(inputs)
+        # original_stamp_size = inputs.shape[1]
+        # factor_of_reduction = 2 ** len(self.dim_scale_factor)
+        # padding_to_add = factor_of_reduction - inputs.shape[1] % factor_of_reduction
+        # if padding_to_add != 0:
+        #     inputs = jnp.pad(
+        #         inputs,
+        #         pad_width=(
+        #             (0, 0),
+        #             (0, padding_to_add),
+        #             (0, padding_to_add),
+        #             (0, 0),
+        #         ),
+        #     )
+        # inputs=jnp.expand_dims(inputs, -1)
+        x = nn.Conv(self.dim, [int(3)], padding="SAME")(inputs)
         time_emb = TimeEmbedding(self.dim)(time)
 
-        dims = [self.dim * i for i in self.dim_scale_factor]
         pre_downsampling = []
         # Downsampling phase
-        for index, dim in enumerate(dims):
-            x = ResnetBlock(dim, self.num_groups)(x, time_emb)
-            x = ResnetBlock(dim, self.num_groups)(x, time_emb)
-            x = Attention(dim)(x)
-            norm = nn.GroupNorm(self.num_groups)(x)
-            x = norm + x
+        for i in range(self.num_down_sampling):
+            x = ResnetBlock()(x, time_emb)
             # Saving this output for residual connection with the upsampling layer
             pre_downsampling.append(x)
-            if index != len(dims) - 1:
-                x = nn.Conv(dim, (5, 5), (2, 2))(x)
+            x = nn.Conv(self.dim, [int(3)], [int(2)])(x)
 
         # Middle block
-        x = ResnetBlock(dims[-1], self.num_groups)(x, time_emb)
-        x = Attention(dim)(x)
-        norm = nn.GroupNorm(self.num_groups)(x)
-        x = norm + x
-        x = ResnetBlock(dims[-1], self.num_groups)(x, time_emb)
+        x = ResnetBlock()(x, time_emb)
+        x = ResnetBlock()(x, time_emb)
 
         # Upsampling phase
-        for index, dim in enumerate(reversed(dims)):
+        x = nn.ConvTranspose(self.dim, [int(3)], [int(2)])(x)
+        for i in range(self.num_down_sampling - 1):
             x = jnp.concatenate([pre_downsampling.pop(), x], -1)
-            x = ResnetBlock(dim, self.num_groups)(x, time_emb)
-            x = ResnetBlock(dim, self.num_groups)(x, time_emb)
-            x = Attention(dim)(x)
-            norm = nn.GroupNorm(self.num_groups)(x)
-            x = norm + x
-            if index != len(dims) - 1:
-                x = nn.ConvTranspose(dim, (5, 5), (2, 2))(x)
+            x = nn.Conv(self.dim, [int(3)])(x)
+            x = ResnetBlock()(x, time_emb)
+            x = nn.ConvTranspose(self.dim, [int(3)], [int(2)])(x)
 
         # Final ResNet block and output convolutional layer
-        x = ResnetBlock(dim, self.num_groups)(x, time_emb)
-        x = nn.Conv(channels, (1, 1), padding="SAME")(x)
-        x = x[:, 0:original_stamp_size, 0:original_stamp_size, :]
+        x = ResnetBlock()(x, time_emb)
+        x = nn.Conv(channels, [int(3)], padding="SAME")(x)
+        # x = x[:, 0:original_stamp_size, 0:original_stamp_size, :]
+
         return x
 
 

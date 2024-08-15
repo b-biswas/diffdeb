@@ -130,9 +130,8 @@ def noisy_latent_images(
         encoder_kernels=encoder_kernels,
         dense_layer_units=dense_layer_units,
     )
-
-    latent_batch = (latent_batch + 1) * latent_scaling_factor
-
+    latent_batch = jnp.expand_dims(latent_batch, -1)
+    # latent_batch = (latent_batch + 1) * latent_scaling_factor
     rng, key = random.split(rng)
     noisy_images, noise = forward_noising(
         key,
@@ -183,7 +182,7 @@ def train_and_evaluate_LDM(
         dense_layer_units=config.vae_config.dense_layer_units,
     )
     init_data = (
-        latent_images,
+        jnp.expand_dims(latent_images, -1),
         jnp.ones((1), jnp.float32),
     )
     rng, key = random.split(rng)
@@ -235,6 +234,7 @@ def train_and_evaluate_LDM(
                 exp_constant=config.exp_constant,
                 latent_scaling_factor=config.latent_scaling_factor,
             )
+
             # Train step.
             state, batch_train_loss = train_step_UNetScore(
                 state=state,

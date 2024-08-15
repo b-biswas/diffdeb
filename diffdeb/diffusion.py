@@ -1,15 +1,16 @@
-import random as r
+from functools import partial
 
 import jax
 import jax.numpy as jnp
 import jax.random as random
 
 from diffdeb.config import get_config_diffusion
+from diffdeb.models import Decoder
 
 config = get_config_diffusion()
 
 
-def compute_betas(timesteps, s=0.00008):
+def compute_betas(timesteps, s=0.008):
     def f(t):
         return jnp.cos((t / timesteps + s) / (1 + s) * 0.5 * jnp.pi) ** 2
 
@@ -28,6 +29,10 @@ alpha_bar = jnp.cumprod(alpha, 0)
 alpha_bar = jnp.concatenate((jnp.array([1.0]), alpha_bar[:-1]), axis=0)
 sqrt_alpha_bar = jnp.sqrt(alpha_bar)
 one_minus_sqrt_alpha_bar = jnp.sqrt(1 - alpha_bar)
+branch_condt = jnp.ones(500)
+
+branch_condt = jnp.ones(500)
+branch_condt = branch_condt.at[0].set(0)
 
 
 # Implement noising logic according to reparameterization trick
@@ -35,9 +40,9 @@ one_minus_sqrt_alpha_bar = jnp.sqrt(1 - alpha_bar)
 def forward_noising(key, x_0, t):
     noise = random.normal(key, x_0.shape)
 
-    reshaped_sqrt_alpha_bar_t = jnp.reshape(jnp.take(sqrt_alpha_bar, t), (-1, 1, 1, 1))
+    reshaped_sqrt_alpha_bar_t = jnp.reshape(jnp.take(sqrt_alpha_bar, t), (-1, 1, 1))
     reshaped_one_minus_sqrt_alpha_bar_t = jnp.reshape(
-        jnp.take(one_minus_sqrt_alpha_bar, t), (-1, 1, 1, 1)
+        jnp.take(one_minus_sqrt_alpha_bar, t), (-1, 1, 1)
     )
 
     noisy_image = (
@@ -52,7 +57,7 @@ def forward_noising(key, x_0, t):
 #     static_argnames=["image_shape"],
 # )
 @jax.jit
-def backward_denoising_ddpm(x_t, pred_noise, t):
+def backward_denoising_ddpm(input_key, x_t, pred_noise, t):
     alpha_t = jnp.take(alpha, t)
     alpha_t_bar = jnp.take(alpha_bar, t)
 
@@ -60,7 +65,7 @@ def backward_denoising_ddpm(x_t, pred_noise, t):
     mean = 1 / (alpha_t**0.5) * (x_t - eps_coef * pred_noise)
 
     var = jnp.take(beta, t)
-    z = random.normal(key=random.PRNGKey(r.randint(1, 1000)), shape=x_t.shape)
+    z = random.normal(input_key, shape=x_t.shape)
 
     return mean + (var**0.5) * z
 
@@ -106,6 +111,96 @@ def forward_SED_noising(key, x_0, t, exp_constant):
     noise = std * normal_noise
     noisy_image = x_0 + noise
     return noisy_image, noise, std
+
+
+@partial(
+    jax.jit,
+    static_argnames=[
+        "input_shape",
+        "latent_dim",
+        "decoder_filters",
+        "decoder_kernels",
+        "dense_layer_units",
+        "padding_infos",
+    ],
+)
+def inverse_prob_ddpm_step(
+    input_key,
+    x_t,
+    pred_noise,
+    t,
+    y,
+    latent_scaling_factor,
+    noise_sigma,
+    decoder_params,
+    input_shape,
+    latent_dim,
+    decoder_filters,
+    decoder_kernels,
+    dense_layer_units,
+    padding_infos,
+):
+
+    # latent_shape = x_t.shape
+
+    alpha_t_bar = jnp.take(alpha_bar, t)
+    # alpha_t_m1_bar = jnp.take(alpha_bar, t - 1)
+    alpha_t = jnp.take(alpha, t)
+    # beta_t = jnp.take(beta, t)
+
+    eps_coef = (1 - alpha_t) / (1 - alpha_t_bar) ** 0.5
+    mean = 1 / (alpha_t**0.5) * (x_t - eps_coef * pred_noise)
+
+    var = jnp.take(beta, t)
+    z = random.normal(input_key, shape=x_t.shape)
+    x_t_m1_bar = mean + (var**0.5) * z * jnp.take(branch_condt, t - 1)
+
+    # x_0 =  (x_t - (1-alpha_t_bar) * pred_noise) / (alpha_t_bar ** 0.5)
+    # # #x_0 = jnp.clip(x_0, -1, +1)
+    # var = jnp.take(beta, t)
+    # z = random.normal(input_key, shape=x_t.shape)
+
+    # # print(var ** 0.5)
+
+    # x_t_m1_bar = (alpha_t ** 0.5) *  ((1 - alpha_t_m1_bar)/(1 - alpha_t_bar)) * x_t
+    # + (alpha_t_m1_bar ** 0.5) * beta_t / (1 - alpha_t_bar) * x_0
+    # + (var ** 0.5) * z
+
+    def gauss_likelihood_fn(x_t, pred_noise):
+        x_0 = (x_t - (1 - alpha_t_bar) ** 0.5 * pred_noise) / (alpha_t_bar**0.5)
+        reconst = Decoder(
+            latent_dim=latent_dim,
+            input_shape=input_shape,
+            filters=decoder_filters,
+            kernels=decoder_kernels,
+            dense_layer_units=dense_layer_units,
+        ).apply({"params": decoder_params}, x_0[:, :, 0])
+
+        reconst_field = jnp.pad(reconst[0], padding_infos[0])
+        for i in range(len(padding_infos) - 1):
+            reconst_field += jnp.pad(reconst[i + 1], padding_infos[i + 1])
+
+        absolute_difference = jnp.abs(y - reconst_field)
+
+        mse = (absolute_difference) ** 2
+        var = noise_sigma**2
+
+        gauss_likelihood = mse / (2 * var)
+
+        gauss_likelihood = mse
+        return jnp.sum(gauss_likelihood), jnp.linalg.norm(absolute_difference)
+
+    gradient, absolute_difference = jax.vmap(
+        jax.grad(gauss_likelihood_fn, has_aux=True)
+    )(x_t, pred_noise)
+
+    x_t_m1 = x_t_m1_bar - 0.005 * gradient / absolute_difference.reshape(-1, 1, 1, 1)
+    # x_t_m1 = (
+    #     x_t_m1_bar - 0.00001 *gradient / absolute_difference.reshape(-1, 1, 1, 1)
+    # )
+    # x_t_m1 = x_t_m1_bar
+
+    return x_t_m1, x_t_m1_bar, 0, (var**0.5) * z
 
 
 # @partial(
