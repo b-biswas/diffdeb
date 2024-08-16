@@ -13,7 +13,7 @@ import orbax
 from flax.training import orbax_utils, train_state
 from jax import random
 
-from diffdeb.diffusion import forward_SED_noising
+from diffdeb.diffusion import forward_noising
 from diffdeb.load_weights import load_model_weights
 from diffdeb.models import Encoder, UNet, reparameterize
 
@@ -21,26 +21,27 @@ logging.basicConfig(level=logging.INFO)
 
 
 @jax.jit
-def score_loss_fn(params, batch, timestamps, std):
-    score = UNet().apply({"params": params}, (batch[0], timestamps))
-    std = std.reshape(-1, 1, 1, 1)
-    loss = (
-        (std * score - (batch[1] - batch[0]) / std) ** 2
-    ).mean()  # TODO: use noise over here directly
+def score_loss_fn(params, noisy_images, noise, timestamps):
+    pred = UNet().apply({"params": params}, (noisy_images, timestamps))
+    # std = std.reshape(-1, 1, 1, 1)
+    # loss = (
+    #     (std * score - (batch[0] - batch[1]) / std) ** 2
+    # ).mean()  # TODO: use noise over here directly
+    loss = ((pred - noise) ** 2).mean()
     return loss
 
 
 @jax.jit
-def train_step_UNetScore(state, batch, timestamps, std):
+def train_step_UNetScore(state, noisy_images, noise, timestamps):
     loss, grads = jax.value_and_grad(score_loss_fn, argnums=0)(
-        state.params, batch, timestamps, std
+        state.params, noisy_images, noise, timestamps
     )
     return state.apply_gradients(grads=grads), loss
 
 
 @jax.jit
-def eval_f_UNetScore(params, images, timestamps, std):
-    loss = score_loss_fn(params, images, timestamps, std)
+def eval_f_UNetScore(params, noisy_images, noise, timestamps):
+    loss = score_loss_fn(params, noisy_images, noise, timestamps)
     return {"loss": loss}
 
 
@@ -102,9 +103,16 @@ def noisy_latent_images(
     encoder_kernels,
     dense_layer_units,
     exp_constant,
+    latent_scaling_factor,
 ):
     rng, key = random.split(rng)
-    timestamps = random.uniform(
+    # timestamps = random.uniform(
+    #     key,
+    #     shape=(batch_size,),
+    #     minval=t_min_val,
+    #     maxval=t_max_val,
+    # )
+    timestamps = random.randint(
         key,
         shape=(batch_size,),
         minval=t_min_val,
@@ -122,14 +130,15 @@ def noisy_latent_images(
         encoder_kernels=encoder_kernels,
         dense_layer_units=dense_layer_units,
     )
+    latent_batch = jnp.expand_dims(latent_batch, -1)
+    # latent_batch = (latent_batch + 1) * latent_scaling_factor
     rng, key = random.split(rng)
-    noisy_images, noise, std = forward_SED_noising(
+    noisy_images, noise = forward_noising(
         key,
         latent_batch,
         t=timestamps,
-        exp_constant=exp_constant,
     )
-    return noisy_images, latent_batch, noise, timestamps, std
+    return noisy_images, latent_batch, noise, timestamps
 
 
 def train_and_evaluate_LDM(
@@ -173,7 +182,7 @@ def train_and_evaluate_LDM(
         dense_layer_units=config.vae_config.dense_layer_units,
     )
     init_data = (
-        latent_images,
+        jnp.expand_dims(latent_images, -1),
         jnp.ones((1), jnp.float32),
     )
     rng, key = random.split(rng)
@@ -188,7 +197,7 @@ def train_and_evaluate_LDM(
             optax.adam(
                 learning_rate=optax.exponential_decay(
                     config.diffusion_config.learning_rate,
-                    transition_steps=config.diffusion_config.steps_per_epoch_train * 30,
+                    transition_steps=config.diffusion_config.steps_per_epoch_train * 40,
                     decay_rate=0.1,
                     end_value=1e-7,
                 ),
@@ -211,11 +220,11 @@ def train_and_evaluate_LDM(
             batch = next(train_ds)
             rng, key = random.split(rng)
 
-            noisy_images, latent_batch, noise, timestamps, std = noisy_latent_images(
+            noisy_images, latent_batch, noise, timestamps = noisy_latent_images(
                 rng=key,
                 batch_size=config.diffusion_config.batch_size,
-                t_min_val=config.t_min_val,
-                t_max_val=config.t_max_val,
+                t_min_val=0,
+                t_max_val=config.diffusion_config.timesteps,
                 batch=batch[0],
                 encoder_params=vae_params["encoder"],
                 latent_dim=config.vae_config.latent_dim,
@@ -223,10 +232,15 @@ def train_and_evaluate_LDM(
                 encoder_kernels=config.vae_config.encoder_kernels,
                 dense_layer_units=config.vae_config.dense_layer_units,
                 exp_constant=config.exp_constant,
+                latent_scaling_factor=config.latent_scaling_factor,
             )
+
             # Train step.
             state, batch_train_loss = train_step_UNetScore(
-                state, (noisy_images, latent_batch), timestamps, std
+                state=state,
+                noisy_images=noisy_images,
+                noise=noise,
+                timestamps=timestamps,
             )
 
             # Compute average loss in this epoch.
@@ -244,11 +258,11 @@ def train_and_evaluate_LDM(
             batch = next(val_ds)
             rng, key = random.split(rng)
 
-            noisy_images, latent_batch, noise, timestamps, std = noisy_latent_images(
+            noisy_images, latent_batch, noise, timestamps = noisy_latent_images(
                 rng=key,
                 batch_size=config.diffusion_config.batch_size,
-                t_min_val=config.t_min_val,
-                t_max_val=config.t_max_val,
+                t_min_val=0,
+                t_max_val=config.diffusion_config.timesteps,
                 batch=batch[0],
                 encoder_params=vae_params["encoder"],
                 latent_dim=config.vae_config.latent_dim,
@@ -256,14 +270,15 @@ def train_and_evaluate_LDM(
                 encoder_kernels=config.vae_config.encoder_kernels,
                 dense_layer_units=config.vae_config.dense_layer_units,
                 exp_constant=config.exp_constant,
+                latent_scaling_factor=config.latent_scaling_factor,
             )
 
             # Eval step.
             batch_metrics = eval_f_UNetScore(
-                state.params,
-                (noisy_images, latent_batch),
+                params=state.params,
+                noisy_images=noisy_images,
+                noise=noise,
                 timestamps=timestamps,
-                std=std,
             )
 
             # Compute average val loss in this epoch.
@@ -298,3 +313,8 @@ def train_and_evaluate_LDM(
 
             save_args = orbax_utils.save_args_from_target(ckpt)
             checkpoint_manager.save(epoch, ckpt, save_kwargs={"save_args": save_args})
+
+            last_save_epoch = epoch
+
+        if epoch - last_save_epoch == config.patience:
+            logging.info("Sorry running out of patience ")

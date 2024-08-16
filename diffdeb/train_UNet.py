@@ -3,7 +3,6 @@ import os
 import shutil
 import time
 
-import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import ml_collections
@@ -14,33 +13,30 @@ from flax.training import orbax_utils, train_state
 from jax import random
 
 from diffdeb.diffusion import forward_noising
-from diffdeb.losses import mse_loss_fn
 from diffdeb.models import UNet
 
 logging.basicConfig(level=logging.INFO)
 
 
 @jax.jit
-def eval_f_UNet(params, images, timestamps):
-    def eval_model(unet_model):
-        recon_images = unet_model((images[0], timestamps))
-        mse_loss = mse_loss_fn(recon_images, images[1]).mean()
-        return {"loss": mse_loss}
-
-    return nn.apply(eval_model, UNet())({"params": params})
+def score_loss_fn(params, noisy_images, noise, timestamps):
+    pred = UNet().apply({"params": params}, (noisy_images, timestamps))
+    loss = ((pred - noise) ** 2).mean()
+    return loss
 
 
 @jax.jit
-def train_step_UNet(state, batch, timestamps):
-    def loss_fn(params):
-        recon_x = UNet().apply({"params": params}, (batch[0], timestamps))
-
-        mse_loss = mse_loss_fn(recon_x, batch[1]).mean()
-
-        return mse_loss
-
-    loss, grads = jax.value_and_grad(loss_fn, argnums=0)(state.params)
+def train_step_UNetScore(state, noisy_images, noise, timestamps):
+    loss, grads = jax.value_and_grad(score_loss_fn, argnums=0)(
+        state.params, noisy_images, noise, timestamps
+    )
     return state.apply_gradients(grads=grads), loss
+
+
+@jax.jit
+def eval_f_UNetScore(params, noisy_images, noise, timestamps):
+    loss = score_loss_fn(params, noisy_images, noise, timestamps)
+    return {"loss": loss}
 
 
 def train_and_evaluate_UNet(
@@ -96,10 +92,10 @@ def train_and_evaluate_UNet(
     logging.info("start training...")
     min_val_loss = np.inf
     metrics = {"train loss": [], "val loss": []}
+
     for epoch in range(config.num_epochs):
         start = time.time()
         train_ds = train_tfds.as_numpy_iterator()
-
         # Loop over training steps.
         current_epoch_train_loss = 0
         for _ in range(config.steps_per_epoch_train):
@@ -115,8 +111,8 @@ def train_and_evaluate_UNet(
             # Generating the noise and noisy image for this batch.
             rng, key = random.split(rng)
             noisy_images, noise = forward_noising(key, batch[1], timestamps)
-            state, batch_train_loss = train_step_UNet(
-                state, (noisy_images, batch[1]), timestamps
+            state, batch_train_loss = train_step_UNetScore(
+                state, noisy_images, noise, timestamps
             )
             current_epoch_train_loss = compute_av(
                 current_epoch_train_loss,
@@ -141,9 +137,10 @@ def train_and_evaluate_UNet(
             # Generating the noise and noisy image for this batch
             rng, key = random.split(rng)
             noisy_images, noise = forward_noising(key, batch[1], timestamps)
-            batch_metrics = eval_f_UNet(
+            batch_metrics = eval_f_UNetScore(
                 state.params,
-                (noisy_images, batch[1]),
+                noisy_images,
+                noise,
                 timestamps=timestamps,
             )
 
